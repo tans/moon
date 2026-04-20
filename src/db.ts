@@ -33,4 +33,16 @@ db.exec(`
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (user_id) REFERENCES users(id)
   );
+
+  CREATE TABLE IF NOT EXISTS orders (
+    id TEXT PRIMARY KEY DEFAULT (lower(random_hex(16))),
+    out_trade_no TEXT NOT NULL UNIQUE,
+    onepay_id TEXT,
+    plan TEXT NOT NULL,
+    fee INTEGER NOT NULL,
+    email TEXT,
+    status TEXT NOT NULL DEFAULT 'pending',
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+  );
 `);

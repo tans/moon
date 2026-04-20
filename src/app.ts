@@ -1,5 +1,15 @@
 import { Hono } from "hono";
 import { db } from "./db";
+import { randomUUID } from "node:crypto";
+
+const ONEPAY_BASE_URL = process.env.ONEPAY_BASE_URL ?? "https://onepay.minapp.xin";
+const PAYMENT_NOTIFY_URL = process.env.PAYMENT_NOTIFY_URL ?? "";
+
+const planPrices: Record<string, number> = {
+  "入门": 990,   // ¥9.9 in fen
+  "普通": 3900,  // ¥39 in fen
+  "高级": 9900,  // ¥99 in fen
+};
 
 const plans = [
   {
@@ -440,6 +450,135 @@ app.get("/api/stats", (c) => {
   return c.json({
     users: userCount.count,
     subscriptions: subscriptionCount.count,
+  });
+});
+
+// Create payment order
+app.post("/api/create-order", async (c) => {
+  const { plan, email } = await c.req.json<{ plan: string; email: string }>();
+
+  if (!plan || !planPrices[plan]) {
+    return c.json({ error: "Invalid plan" }, 400);
+  }
+
+  const outTradeNo = `MOON_${Date.now()}_${randomUUID().slice(0, 8)}`;
+  const fee = planPrices[plan];
+  const title = `MOON ${plan} 订阅`;
+
+  const notifyUrl = PAYMENT_NOTIFY_URL || undefined;
+
+  try {
+    const response = await fetch(`${ONEPAY_BASE_URL}/api/create-order`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        fee,
+        outTradeNo,
+        title,
+        notifyUrl,
+        email,
+      }),
+    });
+
+    if (!response.ok) {
+      const error = await response.text();
+      return c.json({ error: "Failed to create order", details: error }, 500);
+    }
+
+    const data = await response.json() as { paymentUrl: string; order: { id: string; _id: string; fee: number; outTradeNo: string } };
+
+    // Store order in local database
+    db.prepare(`
+      INSERT OR REPLACE INTO orders (out_trade_no, onepay_id, plan, fee, email, status, created_at)
+      VALUES (?, ?, ?, ?, ?, 'pending', CURRENT_TIMESTAMP)
+    `).run(outTradeNo, data.order._id || data.order.id, plan, fee, email || "");
+
+    return c.json({
+      paymentUrl: data.paymentUrl,
+      outTradeNo,
+      orderId: data.order.id || data.order._id,
+    });
+  } catch (error) {
+    console.error("Create order error:", error);
+    return c.json({ error: "Failed to create order" }, 500);
+  }
+});
+
+// Payment notify callback from OnePay
+app.post("/api/payment/notify", async (c) => {
+  try {
+    const order = await c.req.json<{
+      id: string;
+      outTradeNo: string;
+      fee: number;
+      status: string;
+      email?: string;
+    }>();
+
+    if (order.status === "paid" || order.status === "success") {
+      // Update order status
+      db.prepare(`
+        UPDATE orders SET status = 'paid', updated_at = CURRENT_TIMESTAMP
+        WHERE out_trade_no = ? OR onepay_id = ?
+      `).run(order.outTradeNo, order.id);
+
+      // Get or create user
+      const email = order.email || "";
+      let user = email ? db.query("SELECT id FROM users WHERE email = ?").get(email) as { id: string } | undefined : undefined;
+
+      if (!user && email) {
+        const userId = randomUUID();
+        db.prepare("INSERT INTO users (id, email) VALUES (?, ?)").run(userId, email);
+        user = { id: userId };
+      }
+
+      if (user) {
+        // Get plan from order
+        const orderRecord = db.query("SELECT plan FROM orders WHERE out_trade_no = ? OR onepay_id = ?").get(order.outTradeNo, order.id) as { plan: string } | undefined;
+
+        if (orderRecord) {
+          // Create or update subscription
+          db.prepare(`
+            INSERT INTO subscriptions (id, user_id, plan, status, updated_at)
+            VALUES (?, ?, ?, 'active', CURRENT_TIMESTAMP)
+            ON CONFLICT(user_id) DO UPDATE SET
+              plan = excluded.plan,
+              status = 'active',
+              updated_at = CURRENT_TIMESTAMP
+          `).run(randomUUID(), user.id, orderRecord.plan);
+        }
+      }
+
+      return c.json({ received: true });
+    }
+
+    return c.json({ received: true });
+  } catch (error) {
+    console.error("Payment notify error:", error);
+    return c.json({ error: "Notify failed" }, 500);
+  }
+});
+
+// Query order status
+app.get("/api/orders/:outTradeNo/status", (c) => {
+  const { outTradeNo } = c.req.param();
+
+  const order = db.query("SELECT * FROM orders WHERE out_trade_no = ?").get(outTradeNo) as {
+    out_trade_no: string;
+    status: string;
+    plan: string;
+    fee: number;
+  } | undefined;
+
+  if (!order) {
+    return c.json({ error: "Order not found" }, 404);
+  }
+
+  return c.json({
+    outTradeNo: order.out_trade_no,
+    status: order.status,
+    plan: order.plan,
+    fee: order.fee,
   });
 });
 
