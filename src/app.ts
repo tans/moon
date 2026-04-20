@@ -172,7 +172,10 @@ function moonPage() {
             <div style="font-size: 12px; color: var(--muted); font-weight: 500;">Model Always Online</div>
           </div>
         </div>
-        <a class="button primary" href="#plans">开始体验</a>
+        <div class="actions" style="margin-top: 0;">
+          <a class="button" href="/login">登录</a>
+          <a class="button primary" href="#plans">开始体验</a>
+        </div>
       </header>
 
       <section class="hero">
@@ -266,7 +269,154 @@ function moonPage() {
 </html>`;
 }
 
+function loginPage() {
+  return `<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="MOON 登录入口。Model Always Online." />
+    <title>MOON | 登录</title>
+    <style>
+      :root {
+        --bg: #fffaf5;
+        --panel: rgba(255, 255, 255, 0.88);
+        --text: #2b2333;
+        --muted: #7f6f7d;
+        --primary: #f08787;
+        --line: #f0ddd3;
+        --shadow: 0 20px 60px rgba(70, 40, 50, 0.12);
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        color: var(--text);
+        background:
+          radial-gradient(circle at top left, rgba(240, 135, 135, 0.16), transparent 30%),
+          radial-gradient(circle at top right, rgba(255, 199, 167, 0.26), transparent 28%),
+          linear-gradient(180deg, #fffdf9 0%, var(--bg) 100%);
+      }
+      a { color: inherit; text-decoration: none; }
+      .wrap { max-width: 960px; margin: 0 auto; padding: 24px; min-height: 100vh; display: grid; align-items: center; }
+      .panel {
+        border: 1px solid var(--line);
+        background: var(--panel);
+        box-shadow: var(--shadow);
+        backdrop-filter: blur(16px);
+        border-radius: 32px;
+        padding: 28px;
+      }
+      .row { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+      .brand { display: flex; align-items: center; gap: 14px; font-weight: 700; }
+      .logo {
+        width: 46px; height: 46px; border-radius: 999px;
+        background: radial-gradient(circle at 30% 30%, #fff7eb, #f8d9cb 55%, #f08787 100%);
+        box-shadow: inset 0 1px 2px rgba(255,255,255,.5);
+        position: relative;
+      }
+      .logo::after {
+        content: ""; position: absolute; inset: 11px 0 11px 18px;
+        border-radius: 999px; background: rgba(255,255,255,.96);
+      }
+      .button {
+        display: inline-flex; align-items: center; justify-content: center;
+        padding: 12px 18px; border-radius: 999px; font-weight: 600;
+        border: 1px solid var(--line); background: #fff;
+      }
+      .button.primary { background: var(--primary); color: #fff; border-color: transparent; }
+      .grid { display: grid; gap: 18px; margin-top: 28px; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .card { border: 1px solid var(--line); border-radius: 28px; padding: 24px; background: rgba(255,255,255,.78); }
+      .kicker { color: #b66f61; font-size: 14px; letter-spacing: .08em; text-transform: uppercase; }
+      .title { margin: 10px 0 8px; font-size: 30px; letter-spacing: -.04em; }
+      .muted { color: var(--muted); line-height: 1.7; }
+      .field { display: grid; gap: 8px; margin-top: 16px; }
+      .field input {
+        width: 100%; border-radius: 16px; border: 1px solid var(--line);
+        padding: 14px 16px; font-size: 15px; outline: none; background: #fff;
+      }
+      .field input:focus { border-color: #f08787; box-shadow: 0 0 0 3px rgba(240, 135, 135, 0.12); }
+      .actions { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 18px; }
+      .note { margin-top: 18px; font-size: 13px; color: var(--muted); }
+      @media (max-width: 860px) { .grid { grid-template-columns: 1fr; } .title { font-size: 26px; } }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <section class="panel">
+        <div class="row">
+          <div class="brand">
+            <div class="logo" aria-hidden="true"></div>
+            <div>
+              <div style="font-size: 18px;">MOON</div>
+              <div style="font-size: 12px; color: var(--muted); font-weight: 500;">Model Always Online</div>
+            </div>
+          </div>
+          <a class="button" href="/">返回首页</a>
+        </div>
+
+        <div style="margin-top: 26px; max-width: 700px;">
+          <div class="kicker">Access Portal</div>
+          <h1 class="title">登录或注册，继续使用 MOON</h1>
+          <p class="muted">
+            这里提供一个明确的入口，方便进入后台或创建账号。后续可接入真实认证服务。
+          </p>
+        </div>
+
+        <div class="grid">
+          <article class="card">
+            <div class="kicker">登录</div>
+            <h2 class="title" style="font-size: 24px;">已有账号</h2>
+            <p class="muted">输入邮箱和密码进入系统。</p>
+            <div class="field">
+              <label>
+                <div class="kicker">邮箱</div>
+                <input type="email" placeholder="name@example.com" />
+              </label>
+            </div>
+            <div class="field">
+              <label>
+                <div class="kicker">密码</div>
+                <input type="password" placeholder="输入密码" />
+              </label>
+            </div>
+            <div class="actions">
+              <a class="button primary" href="/admin/login">登录管理后台</a>
+            </div>
+          </article>
+
+          <article class="card">
+            <div class="kicker">注册</div>
+            <h2 class="title" style="font-size: 24px;">新用户</h2>
+            <p class="muted">先创建账号，再生成 secret key。</p>
+            <div class="field">
+              <label>
+                <div class="kicker">用户名</div>
+                <input type="text" placeholder="输入用户名" />
+              </label>
+            </div>
+            <div class="field">
+              <label>
+                <div class="kicker">邮箱</div>
+                <input type="email" placeholder="name@example.com" />
+              </label>
+            </div>
+            <div class="actions">
+              <a class="button primary" href="/">去首页</a>
+            </div>
+          </article>
+        </div>
+
+        <p class="note">如果你只是想先看产品，也可以直接返回首页查看套餐和模型路由。</p>
+      </section>
+    </div>
+  </body>
+</html>`;
+}
+
 app.get("/", (c) => c.html(moonPage()));
+app.get("/login", (c) => c.html(loginPage()));
+app.get("/admin/login", (c) => c.html(loginPage()));
 
 app.get("/health", (c) =>
   c.json({
