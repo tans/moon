@@ -2,10 +2,12 @@ import { Hono } from "hono";
 import { db } from "./db";
 import bcrypt from "bcryptjs";
 import { routeAIRequest, getConfiguredProviders, getModelsForTier, type AIRequest } from "./ai/router";
-import { recordUsage, getUserUsageLimits, recordUsageEvent, hasQuota } from "./ai/cost";
+import { recordUsage, getUserUsageLimits, recordUsageEvent, hasQuota, getExpirationWarning, isSubscriptionExpired } from "./ai/cost";
 import { DEFAULT_MODELS, MODEL_CONFIGS } from "./ai/models";
+import { getConfig } from "./config";
 
-const JWT_SECRET = process.env.JWT_SECRET || "moon-secret-key-change-in-production";
+const config = getConfig();
+const JWT_SECRET = config.app.jwtSecret;
 const SESSION_DURATION_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
 
 function generateId(): string {
@@ -86,6 +88,7 @@ interface Order {
   out_trade_no: string;
   onepay_id: string | null;
   plan: string;
+  billing_cycle: string;
   fee: number;
   email: string | null;
   status: string;
@@ -97,6 +100,13 @@ const planPrices: Record<string, number> = {
   "入门": 990,
   "普通": 3900,
   "高级": 9900,
+};
+
+// Yearly prices (20% discount)
+const planPricesYearly: Record<string, number> = {
+  "入门": Math.round(990 * 12 * 0.8),
+  "普通": Math.round(3900 * 12 * 0.8),
+  "高级": Math.round(9900 * 12 * 0.8),
 };
 
 async function verifyToken(token: string): Promise<TokenPayload | null> {
@@ -188,7 +198,8 @@ const modelTiers = [
   },
 ] as const;
 
-function orderPage(planName: string, outTradeNo: string, fee: number) {
+function orderPage(planName: string, outTradeNo: string, fee: number, billingCycle: string) {
+  const cycleLabel = billingCycle === 'yearly' ? '年度' : '月度';
   return baseHtml(`
     ${navbar()}
 
@@ -208,6 +219,10 @@ function orderPage(planName: string, outTradeNo: string, fee: number) {
           <div class="flex justify-between text-[#a0937d] text-sm">
             <span>套餐</span>
             <span class="text-[#f5f5dc]">${planName}</span>
+          </div>
+          <div class="flex justify-between text-[#a0937d] text-sm">
+            <span>周期</span>
+            <span class="text-[#f5f5dc]">${cycleLabel}</span>
           </div>
           <div class="flex justify-between text-[#a0937d] text-sm">
             <span>金额</span>
@@ -350,13 +365,21 @@ function selectPlanPage() {
         <p class="text-[#a0937d]">选择适合你的使用量</p>
       </div>
 
+      <!-- Billing Cycle Toggle -->
+      <div class="flex justify-center mb-8">
+        <div class="inline-flex rounded-full bg-[#1a1410] border border-[#3d2f1f] p-1">
+          <button type="button" id="cycleMonthly" onclick="setBillingCycle('monthly')" class="px-6 py-2 rounded-full text-sm font-medium transition-all bg-[#f5f5dc] text-black">月度</button>
+          <button type="button" id="cycleYearly" onclick="setBillingCycle('yearly')" class="px-6 py-2 rounded-full text-sm font-medium transition-all text-[#a0937d] hover:text-[#f5f5dc]">年度 <span class="text-green-400 text-xs">8折</span></button>
+        </div>
+      </div>
+
       <div class="grid md:grid-cols-3 gap-6">
         ${plans.map((plan, i) => `
           <div class="bg-[#1a1410] border ${i === 1 ? 'border-[#f5f5dc] ring-1 ring-[#f5f5dc]' : 'border-[#3d2f1f]'} rounded-2xl p-8 text-center">
             ${i === 1 ? '<div class="text-[#f5f5dc] text-xs font-medium mb-2">推荐</div>' : ''}
             <h2 class="text-[#f5f5dc] text-xl font-bold mb-4">${plan.name}</h2>
-            <div class="text-[#f5f5dc] text-4xl font-bold mb-1">${plan.price}</div>
-            <div class="text-[#a0937d] text-sm mb-6"></div>
+            <div class="text-[#f5f5dc] text-4xl font-bold mb-1"><span id="price-${plan.name}">${plan.price}</span></div>
+            <div id="price-note-${plan.name}" class="text-[#a0937d] text-sm mb-6"></div>
             <ul class="text-left text-[#a0937d] text-sm space-y-3 mb-8">
               <li class="flex items-center gap-2"><span>🌕</span> ${plan.fullMoon}</li>
               <li class="flex items-center gap-2"><span>🌓</span> ${plan.halfMoon}</li>
@@ -366,6 +389,7 @@ function selectPlanPage() {
             </ul>
             <form method="POST" action="/order/create">
               <input type="hidden" name="plan" value="${plan.name}" />
+              <input type="hidden" name="billing_cycle" id="billing_cycle-${plan.name}" value="monthly" />
               <button type="submit" class="block w-full ${i === 1 ? 'bg-[#f5f5dc] text-black' : 'border border-[#f5f5dc] text-[#f5f5dc]'} px-6 py-3 rounded-full font-medium hover:opacity-90">立即开通</button>
             </form>
           </div>
@@ -374,6 +398,33 @@ function selectPlanPage() {
     </main>
 
     ${footer()}
+
+    <script>
+      const yearlyPrices = {
+        "入门": ${Math.round(990 * 12 * 0.8)},
+        "普通": ${Math.round(3900 * 12 * 0.8)},
+        "高级": ${Math.round(9900 * 12 * 0.8)},
+      };
+      const monthlyPrices = {
+        "入门": 990,
+        "普通": 3900,
+        "高级": 9900,
+      };
+      let currentCycle = 'monthly';
+
+      function setBillingCycle(cycle) {
+        currentCycle = cycle;
+        document.getElementById('cycleMonthly').className = cycle === 'monthly' ? 'px-6 py-2 rounded-full text-sm font-medium transition-all bg-[#f5f5dc] text-black' : 'px-6 py-2 rounded-full text-sm font-medium transition-all text-[#a0937d] hover:text-[#f5f5dc]';
+        document.getElementById('cycleYearly').className = cycle === 'yearly' ? 'px-6 py-2 rounded-full text-sm font-medium transition-all bg-[#f5f5dc] text-black' : 'px-6 py-2 rounded-full text-sm font-medium transition-all text-[#a0937d] hover:text-[#f5f5dc]';
+
+        ['入门', '普通', '高级'].forEach(function(planName) {
+          var price = cycle === 'yearly' ? yearlyPrices[planName] : monthlyPrices[planName];
+          document.getElementById('price-' + planName).textContent = '¥' + (price / 100).toFixed(0);
+          document.getElementById('price-note-' + planName).textContent = cycle === 'yearly' ? '相当于 ¥' + (price / 12 / 100).toFixed(0) + '/月' : '';
+          document.getElementById('billing_cycle-' + planName).value = cycle;
+        });
+      }
+    </script>
   `);
 }
 
@@ -410,6 +461,7 @@ function navbar(currentPath: string = "/") {
       <div class="flex items-center gap-6 text-sm">
         <a href="/" class="hover:text-[#d4c4a8] ${currentPath === '/' ? 'text-[#f5f5dc] font-semibold' : 'text-[#a0937d]'}">首页</a>
         <a href="/pricing" class="hover:text-[#d4c4a8] ${currentPath === '/pricing' ? 'text-[#f5f5dc] font-semibold' : 'text-[#a0937d]'}">套餐</a>
+        <a href="/docs" class="hover:text-[#d4c4a8] ${currentPath === '/docs' ? 'text-[#f5f5dc] font-semibold' : 'text-[#a0937d]'}">API 文档</a>
         <a href="/login" class="text-[#a0937d] hover:text-[#f5f5dc]">登录</a>
         <a href="/register" class="bg-[#f5f5dc] text-black px-4 py-2 rounded-full text-sm font-medium hover:bg-[#d4c4a8]">注册</a>
       </div>
@@ -443,19 +495,25 @@ function loginPageWithError(error: string) {
       </div>
 
       <div class="bg-[#1a1410] border border-[#3d2f1f] rounded-2xl p-6">
-        <div class="bg-red-900/30 border border-red-800 text-red-200 rounded-lg px-4 py-3 mb-4 text-sm">
-          ${error}
-        </div>
-        <form method="POST" action="/login" class="space-y-4">
+        <div id="errorBox" class="bg-red-900/30 border border-red-800 text-red-200 rounded-lg px-4 py-3 mb-4 text-sm">${error}</div>
+        <form id="loginForm" method="POST" action="/login" class="space-y-4">
           <div>
             <label class="text-[#a0937d] text-sm block mb-2">邮箱</label>
-            <input type="email" name="email" placeholder="your@email.com" class="w-full bg-black border border-[#3d2f1f] rounded-lg px-4 py-3 text-[#f5f5dc] placeholder-[#5a4d3d] focus:border-[#f5f5dc] outline-none" />
+            <input type="email" name="email" id="emailInput" placeholder="your@email.com" class="w-full bg-black border border-[#3d2f1f] rounded-lg px-4 py-3 text-[#f5f5dc] placeholder-[#5a4d3d] focus:border-[#f5f5dc] outline-none" />
+            <div id="emailError" class="text-red-400 text-xs mt-1 hidden"></div>
           </div>
           <div>
             <label class="text-[#a0937d] text-sm block mb-2">密码</label>
-            <input type="password" name="password" placeholder="••••••••" class="w-full bg-black border border-[#3d2f1f] rounded-lg px-4 py-3 text-[#f5f5dc] placeholder-[#5a4d3d] focus:border-[#f5f5dc] outline-none" />
+            <input type="password" name="password" id="passwordInput" placeholder="••••••••" class="w-full bg-black border border-[#3d2f1f] rounded-lg px-4 py-3 text-[#f5f5dc] placeholder-[#5a4d3d] focus:border-[#f5f5dc] outline-none" />
+            <div id="passwordError" class="text-red-400 text-xs mt-1 hidden"></div>
           </div>
-          <button type="submit" class="w-full bg-[#f5f5dc] text-black py-3 rounded-full font-medium hover:bg-[#d4c4a8]">登录</button>
+          <button type="submit" id="submitBtn" class="w-full bg-[#f5f5dc] text-black py-3 rounded-full font-medium hover:bg-[#d4c4a8] disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2">
+            <span id="btnText">登录</span>
+            <svg id="loadingSpinner" class="animate-spin hidden w-5 h-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+              <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+              <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+            </svg>
+          </button>
         </form>
 
         <div class="mt-6 text-center text-[#7a6f5d] text-sm">
@@ -465,6 +523,93 @@ function loginPageWithError(error: string) {
     </main>
 
     ${footer()}
+
+    <script>
+      (function() {
+        var form = document.getElementById('loginForm');
+        var submitBtn = document.getElementById('submitBtn');
+        var emailInput = document.getElementById('emailInput');
+        var passwordInput = document.getElementById('passwordInput');
+        var emailError = document.getElementById('emailError');
+        var passwordError = document.getElementById('passwordError');
+        var errorBox = document.getElementById('errorBox');
+        var btnText = document.getElementById('btnText');
+        var loadingSpinner = document.getElementById('loadingSpinner');
+
+        function isValidEmail(email) {
+          return /^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(email);
+        }
+
+        function showError(element, message) {
+          element.textContent = message;
+          element.classList.remove('hidden');
+        }
+
+        function hideError(element) {
+          element.classList.add('hidden');
+        }
+
+        function setInputError(input, hasError) {
+          input.classList.toggle('border-red-500', hasError);
+          input.classList.toggle('border-[#3d2f1f]', !hasError);
+        }
+
+        emailInput.addEventListener('blur', function() {
+          if (emailInput.value && !isValidEmail(emailInput.value)) {
+            showError(emailError, '请输入有效的邮箱地址');
+            setInputError(emailInput, true);
+          } else {
+            hideError(emailError);
+            setInputError(emailInput, false);
+          }
+        });
+
+        emailInput.addEventListener('input', function() {
+          if (isValidEmail(emailInput.value)) {
+            hideError(emailError);
+            setInputError(emailInput, false);
+          }
+        });
+
+        passwordInput.addEventListener('input', function() {
+          hideError(passwordError);
+          setInputError(passwordInput, false);
+        });
+
+        form.addEventListener('submit', function(e) {
+          var email = emailInput.value.trim();
+          var password = passwordInput.value;
+          var hasError = false;
+
+          errorBox.classList.add('hidden');
+
+          if (!email) {
+            showError(emailError, '请填写邮箱');
+            setInputError(emailInput, true);
+            hasError = true;
+          } else if (!isValidEmail(email)) {
+            showError(emailError, '请输入有效的邮箱地址');
+            setInputError(emailInput, true);
+            hasError = true;
+          }
+
+          if (!password) {
+            showError(passwordError, '请填写密码');
+            setInputError(passwordInput, true);
+            hasError = true;
+          }
+
+          if (hasError) {
+            e.preventDefault();
+            return;
+          }
+
+          submitBtn.disabled = true;
+          btnText.textContent = '登录中...';
+          loadingSpinner.classList.remove('hidden');
+        });
+      })();
+    </script>
   `);
 }
 
@@ -635,16 +780,25 @@ function loginPage() {
       </div>
 
       <div class="bg-[#1a1410] border border-[#3d2f1f] rounded-2xl p-6">
-        <form method="POST" action="/login" class="space-y-4">
+        <div id="errorBox" class="bg-red-900/30 border border-red-800 text-red-200 rounded-lg px-4 py-3 mb-4 text-sm hidden"></div>
+        <form id="loginForm" method="POST" action="/login" class="space-y-4">
           <div>
             <label class="text-[#a0937d] text-sm block mb-2">邮箱</label>
-            <input type="email" name="email" placeholder="your@email.com" class="w-full bg-black border border-[#3d2f1f] rounded-lg px-4 py-3 text-[#f5f5dc] placeholder-[#5a4d3d] focus:border-[#f5f5dc] outline-none" />
+            <input type="email" name="email" id="emailInput" placeholder="your@email.com" class="w-full bg-black border border-[#3d2f1f] rounded-lg px-4 py-3 text-[#f5f5dc] placeholder-[#5a4d3d] focus:border-[#f5f5dc] outline-none" />
+            <div id="emailError" class="text-red-400 text-xs mt-1 hidden"></div>
           </div>
           <div>
             <label class="text-[#a0937d] text-sm block mb-2">密码</label>
-            <input type="password" name="password" placeholder="••••••••" class="w-full bg-black border border-[#3d2f1f] rounded-lg px-4 py-3 text-[#f5f5dc] placeholder-[#5a4d3d] focus:border-[#f5f5dc] outline-none" />
+            <input type="password" name="password" id="passwordInput" placeholder="••••••••" class="w-full bg-black border border-[#3d2f1f] rounded-lg px-4 py-3 text-[#f5f5dc] placeholder-[#5a4d3d] focus:border-[#f5f5dc] outline-none" />
+            <div id="passwordError" class="text-red-400 text-xs mt-1 hidden"></div>
           </div>
-          <button type="submit" class="w-full bg-[#f5f5dc] text-black py-3 rounded-full font-medium hover:bg-[#d4c4a8]">登录</button>
+          <button type="submit" id="submitBtn" class="w-full bg-[#f5f5dc] text-black py-3 rounded-full font-medium hover:bg-[#d4c4a8] disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2">
+            <span id="btnText">登录</span>
+            <svg id="loadingSpinner" class="animate-spin hidden w-5 h-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+              <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+              <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+            </svg>
+          </button>
         </form>
 
         <div class="mt-6 text-center text-[#7a6f5d] text-sm">
@@ -654,6 +808,93 @@ function loginPage() {
     </main>
 
     ${footer()}
+
+    <script>
+      (function() {
+        var form = document.getElementById('loginForm');
+        var submitBtn = document.getElementById('submitBtn');
+        var emailInput = document.getElementById('emailInput');
+        var passwordInput = document.getElementById('passwordInput');
+        var emailError = document.getElementById('emailError');
+        var passwordError = document.getElementById('passwordError');
+        var errorBox = document.getElementById('errorBox');
+        var btnText = document.getElementById('btnText');
+        var loadingSpinner = document.getElementById('loadingSpinner');
+
+        function isValidEmail(email) {
+          return /^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(email);
+        }
+
+        function showError(element, message) {
+          element.textContent = message;
+          element.classList.remove('hidden');
+        }
+
+        function hideError(element) {
+          element.classList.add('hidden');
+        }
+
+        function setInputError(input, hasError) {
+          input.classList.toggle('border-red-500', hasError);
+          input.classList.toggle('border-[#3d2f1f]', !hasError);
+        }
+
+        emailInput.addEventListener('blur', function() {
+          if (emailInput.value && !isValidEmail(emailInput.value)) {
+            showError(emailError, '请输入有效的邮箱地址');
+            setInputError(emailInput, true);
+          } else {
+            hideError(emailError);
+            setInputError(emailInput, false);
+          }
+        });
+
+        emailInput.addEventListener('input', function() {
+          if (isValidEmail(emailInput.value)) {
+            hideError(emailError);
+            setInputError(emailInput, false);
+          }
+        });
+
+        passwordInput.addEventListener('input', function() {
+          hideError(passwordError);
+          setInputError(passwordInput, false);
+        });
+
+        form.addEventListener('submit', function(e) {
+          var email = emailInput.value.trim();
+          var password = passwordInput.value;
+          var hasError = false;
+
+          errorBox.classList.add('hidden');
+
+          if (!email) {
+            showError(emailError, '请填写邮箱');
+            setInputError(emailInput, true);
+            hasError = true;
+          } else if (!isValidEmail(email)) {
+            showError(emailError, '请输入有效的邮箱地址');
+            setInputError(emailInput, true);
+            hasError = true;
+          }
+
+          if (!password) {
+            showError(passwordError, '请填写密码');
+            setInputError(passwordInput, true);
+            hasError = true;
+          }
+
+          if (hasError) {
+            e.preventDefault();
+            return;
+          }
+
+          submitBtn.disabled = true;
+          btnText.textContent = '登录中...';
+          loadingSpinner.classList.remove('hidden');
+        });
+      })();
+    </script>
   `);
 }
 
@@ -669,16 +910,26 @@ function registerPage() {
       </div>
 
       <div class="bg-[#1a1410] border border-[#3d2f1f] rounded-2xl p-6">
-        <form method="POST" action="/register" class="space-y-4">
+        <div id="errorBox" class="bg-red-900/30 border border-red-800 text-red-200 rounded-lg px-4 py-3 mb-4 text-sm hidden"></div>
+        <form id="registerForm" method="POST" action="/register" class="space-y-4">
           <div>
             <label class="text-[#a0937d] text-sm block mb-2">邮箱</label>
-            <input type="email" name="email" placeholder="your@email.com" class="w-full bg-black border border-[#3d2f1f] rounded-lg px-4 py-3 text-[#f5f5dc] placeholder-[#5a4d3d] focus:border-[#f5f5dc] outline-none" />
+            <input type="email" name="email" id="emailInput" placeholder="your@email.com" class="w-full bg-black border border-[#3d2f1f] rounded-lg px-4 py-3 text-[#f5f5dc] placeholder-[#5a4d3d] focus:border-[#f5f5dc] outline-none" />
+            <div id="emailError" class="text-red-400 text-xs mt-1 hidden"></div>
           </div>
           <div>
             <label class="text-[#a0937d] text-sm block mb-2">密码</label>
-            <input type="password" name="password" placeholder="设置密码" class="w-full bg-black border border-[#3d2f1f] rounded-lg px-4 py-3 text-[#f5f5dc] placeholder-[#5a4d3d] focus:border-[#f5f5dc] outline-none" />
+            <input type="password" name="password" id="passwordInput" placeholder="设置密码" class="w-full bg-black border border-[#3d2f1f] rounded-lg px-4 py-3 text-[#f5f5dc] placeholder-[#5a4d3d] focus:border-[#f5f5dc] outline-none" />
+            <div id="passwordError" class="text-red-400 text-xs mt-1 hidden"></div>
+            <div class="text-[#7a6f5d] text-xs mt-1">至少6个字符</div>
           </div>
-          <button type="submit" class="w-full bg-[#f5f5dc] text-black py-3 rounded-full font-medium hover:bg-[#d4c4a8]">注册</button>
+          <button type="submit" id="submitBtn" class="w-full bg-[#f5f5dc] text-black py-3 rounded-full font-medium hover:bg-[#d4c4a8] disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2">
+            <span id="btnText">注册</span>
+            <svg id="loadingSpinner" class="animate-spin hidden w-5 h-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+              <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+              <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+            </svg>
+          </button>
         </form>
 
         <div class="mt-6 text-center text-[#7a6f5d] text-sm">
@@ -688,14 +939,108 @@ function registerPage() {
     </main>
 
     ${footer()}
+
+    <script>
+      (function() {
+        var form = document.getElementById('registerForm');
+        var submitBtn = document.getElementById('submitBtn');
+        var emailInput = document.getElementById('emailInput');
+        var passwordInput = document.getElementById('passwordInput');
+        var emailError = document.getElementById('emailError');
+        var passwordError = document.getElementById('passwordError');
+        var errorBox = document.getElementById('errorBox');
+        var btnText = document.getElementById('btnText');
+        var loadingSpinner = document.getElementById('loadingSpinner');
+
+        function isValidEmail(email) {
+          return /^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(email);
+        }
+
+        function showError(element, message) {
+          element.textContent = message;
+          element.classList.remove('hidden');
+        }
+
+        function hideError(element) {
+          element.classList.add('hidden');
+        }
+
+        function setInputError(input, hasError) {
+          input.classList.toggle('border-red-500', hasError);
+          input.classList.toggle('border-[#3d2f1f]', !hasError);
+        }
+
+        emailInput.addEventListener('blur', function() {
+          if (emailInput.value && !isValidEmail(emailInput.value)) {
+            showError(emailError, '请输入有效的邮箱地址');
+            setInputError(emailInput, true);
+          } else {
+            hideError(emailError);
+            setInputError(emailInput, false);
+          }
+        });
+
+        emailInput.addEventListener('input', function() {
+          if (isValidEmail(emailInput.value)) {
+            hideError(emailError);
+            setInputError(emailInput, false);
+          }
+        });
+
+        passwordInput.addEventListener('input', function() {
+          if (passwordInput.value.length >= 6) {
+            hideError(passwordError);
+            setInputError(passwordInput, false);
+          }
+        });
+
+        form.addEventListener('submit', function(e) {
+          var email = emailInput.value.trim();
+          var password = passwordInput.value;
+          var hasError = false;
+
+          errorBox.classList.add('hidden');
+
+          if (!email) {
+            showError(emailError, '请填写邮箱');
+            setInputError(emailInput, true);
+            hasError = true;
+          } else if (!isValidEmail(email)) {
+            showError(emailError, '请输入有效的邮箱地址');
+            setInputError(emailInput, true);
+            hasError = true;
+          }
+
+          if (!password) {
+            showError(passwordError, '请填写密码');
+            setInputError(passwordInput, true);
+            hasError = true;
+          } else if (password.length < 6) {
+            showError(passwordError, '密码至少需要6个字符');
+            setInputError(passwordInput, true);
+            hasError = true;
+          }
+
+          if (hasError) {
+            e.preventDefault();
+            return;
+          }
+
+          submitBtn.disabled = true;
+          btnText.textContent = '注册中...';
+          loadingSpinner.classList.remove('hidden');
+        });
+      })();
+    </script>
   `);
 }
 
 function dashboardPage(
   email: string,
-  subscription: { plan: string; status: string } | undefined,
+  subscription: { plan: string; status: string; expires_at?: string | null } | undefined,
   usage: { fullMoon: { limit: number; used: number }; halfMoon: { limit: number; used: number }; newMoon: { limit: number; used: number } },
-  apiKey: string
+  apiKey: string,
+  expirationWarning: string | null
 ) {
   const planData = plans.find(p => p.name === subscription?.plan);
   const planName = planData?.name || "未订阅";
@@ -703,6 +1048,10 @@ function dashboardPage(
   const planIndex = planData ? plans.indexOf(planData) : -1;
 
   const formatLimit = (n: number) => n === Infinity ? '不限' : n.toString();
+
+  const warningHtml = expirationWarning
+    ? `<div class="bg-yellow-900/30 border border-yellow-700 text-yellow-200 rounded-lg px-4 py-3 mb-6 text-sm">⚠️ ${expirationWarning}</div>`
+    : '';
 
   return baseHtml(`
     ${navbar('/dashboard')}
@@ -712,6 +1061,8 @@ function dashboardPage(
         <h1 class="text-2xl font-bold text-[#f5f5dc]">用户后台 🌙</h1>
         <p class="text-[#a0937d]">${email}</p>
       </div>
+
+      ${warningHtml}
 
       <div class="grid md:grid-cols-2 gap-6">
         <!-- Current Plan -->
@@ -787,6 +1138,42 @@ function dashboardPage(
             </a>
           </div>
         </div>
+
+        <!-- AI Preferences -->
+        <div class="bg-[#1a1410] border border-[#3d2f1f] rounded-2xl p-6">
+          <h2 class="text-[#f5f5dc] font-bold mb-4">AI 偏好设置</h2>
+          <div class="space-y-4">
+            <div>
+              <label class="text-[#a0937d] text-sm block mb-2">优先模型</label>
+              <select id="preferredTier" onchange="updatePreferences()" class="w-full bg-black border border-[#3d2f1f] rounded-lg px-4 py-2 text-[#f5f5dc] focus:border-[#f5f5dc] outline-none">
+                <option value="🌕">🌕 高级模型 (GPT-4o, Claude, Gemini)</option>
+                <option value="🌓">🌓 均衡模型 (Kimi, MiniMax, Qwen)</option>
+                <option value="🌑">🌑 轻量模型 (快速、低成本)</option>
+              </select>
+            </div>
+            <div>
+              <label class="text-[#a0937d] text-sm block mb-2">优先提供商</label>
+              <select id="preferredProvider" onchange="updatePreferences()" class="w-full bg-black border border-[#3d2f1f] rounded-lg px-4 py-2 text-[#f5f5dc] focus:border-[#f5f5dc] outline-none">
+                <option value="">不使用偏好</option>
+                <option value="openai">OpenAI (GPT)</option>
+                <option value="anthropic">Anthropic (Claude)</option>
+                <option value="google">Google (Gemini)</option>
+                <option value="kimi">Kimi</option>
+                <option value="minimax">MiniMax</option>
+                <option value="qwen">Qwen</option>
+              </select>
+            </div>
+            <div class="flex items-center gap-2">
+              <input type="checkbox" id="usePersonalApiKey" onchange="togglePersonalApiKey(); updatePreferences()" class="w-4 h-4 rounded border-[#3d2f1f] bg-black checked:bg-[#f5f5dc]" />
+              <label for="usePersonalApiKey" class="text-[#a0937d] text-sm">使用自己的 API Key</label>
+            </div>
+            <div id="personalApiKeySection" class="hidden">
+              <label class="text-[#a0937d] text-sm block mb-2">第三方 API Key</label>
+              <input type="password" id="personalApiKey" placeholder="输入你的 API Key" onchange="updatePreferences()" class="w-full bg-black border border-[#3d2f1f] rounded-lg px-4 py-2 text-[#f5f5dc] placeholder-[#5a4d3d] focus:border-[#f5f5dc] outline-none" />
+            </div>
+          </div>
+          <div id="prefStatus" class="text-[#7a6f5d] text-xs mt-3"></div>
+        </div>
       </div>
     </main>
 
@@ -826,7 +1213,7 @@ function dashboardPage(
           const data = await res.json();
           if (data.apiKey) {
             document.getElementById('apiKeyValue').value = data.apiKey;
-            document.getElementById('apiKeyDisplay').textContent = '••••••••••••••••';
+            document.getElementById('apiDisplay').textContent = '••••••••••••••••';
             keyVisible = false;
             document.getElementById('toggleKeyBtn').textContent = '显示 Key';
             document.getElementById('copyFeedback').textContent = '✅ 新 Key 已生成';
@@ -835,6 +1222,72 @@ function dashboardPage(
           alert('重新生成失败');
         }
       }
+
+      // Load AI preferences on page load
+      async function loadPreferences() {
+        try {
+          const res = await fetch('/api/ai/preferences');
+          const data = await res.json();
+          if (data.preferredTier) {
+            document.getElementById('preferredTier').value = data.preferredTier;
+          }
+          if (data.preferredProvider) {
+            document.getElementById('preferredProvider').value = data.preferredProvider;
+          }
+          if (data.usePersonalApiKey) {
+            document.getElementById('usePersonalApiKey').checked = true;
+            document.getElementById('personalApiKeySection').classList.remove('hidden');
+          }
+          if (data.personalApiKey) {
+            document.getElementById('personalApiKey').value = data.personalApiKey;
+          }
+        } catch (e) {
+          console.error('Failed to load preferences:', e);
+        }
+      }
+
+      function togglePersonalApiKey() {
+        const usePersonal = document.getElementById('usePersonalApiKey').checked;
+        const section = document.getElementById('personalApiKeySection');
+        if (usePersonal) {
+          section.classList.remove('hidden');
+        } else {
+          section.classList.add('hidden');
+        }
+      }
+
+      async function updatePreferences() {
+        const preferredTier = document.getElementById('preferredTier').value;
+        const preferredProvider = document.getElementById('preferredProvider').value;
+        const usePersonalApiKey = document.getElementById('usePersonalApiKey').checked;
+        const personalApiKey = document.getElementById('personalApiKey').value;
+
+        try {
+          const res = await fetch('/api/ai/preferences', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              preferredTier,
+              preferredProvider: preferredProvider || undefined,
+              usePersonalApiKey,
+              personalApiKey: usePersonalApiKey ? personalApiKey : undefined,
+            }),
+          });
+          const data = await res.json();
+          const statusEl = document.getElementById('prefStatus');
+          if (data.success) {
+            statusEl.textContent = '✅ 设置已保存';
+          } else {
+            statusEl.textContent = '❌ 保存失败';
+          }
+          setTimeout(() => { statusEl.textContent = ''; }, 2000);
+        } catch (e) {
+          document.getElementById('prefStatus').textContent = '❌ 保存失败';
+        }
+      }
+
+      // Load preferences when page loads
+      loadPreferences();
     </script>
   `);
 }
@@ -848,8 +1301,10 @@ app.get("/dashboard", async (c) => {
   if (!user) {
     return c.redirect("/login");
   }
-  const subscription = db.query("SELECT * FROM subscriptions WHERE user_id = ?").get(user.email) as { plan: string; status: string } | undefined;
+  const subscription = db.query("SELECT * FROM subscriptions WHERE user_id = ?").get(user.id) as { plan: string; status: string; expires_at: string | null } | undefined;
   const limits = getUserUsageLimits(user.id);
+  // Get expiration warning
+  const expirationWarning = getExpirationWarning(user.id);
   // Get user's API key or create one if none exists
   const apiKeyRow = db.query("SELECT key_hash FROM api_keys WHERE user_id = ? AND is_active = 1 ORDER BY created_at DESC LIMIT 1").get(user.id) as { key_hash: string } | undefined;
   let apiKey = "";
@@ -862,7 +1317,7 @@ app.get("/dashboard", async (c) => {
       "INSERT INTO api_keys (id, user_id, key_hash, name) VALUES (?, ?, ?, ?)"
     ).run(generateId(), user.id, btoa(apiKey), "Default Key");
   }
-  return c.html(dashboardPage(user.email, subscription, limits, apiKey));
+  return c.html(dashboardPage(user.email, subscription, limits, apiKey, expirationWarning));
 });
 
 app.post("/api/apikey/regenerate", async (c) => {
@@ -960,6 +1415,243 @@ app.post("/register", async (c) => {
   return c.redirect("/dashboard");
 });
 
+app.get("/docs", (c) => c.html(docsPage()));
+
+function docsPage() {
+  return baseHtml(`
+    ${navbar('/docs')}
+
+    <main class="max-w-5xl mx-auto px-4 py-12">
+      <div class="mb-12">
+        <h1 class="text-3xl font-bold text-[#f5f5dc] mb-2">API 文档 📚</h1>
+        <p class="text-[#a0937d]">了解 MOON API 的使用方法</p>
+      </div>
+
+      <!-- Auth Section -->
+      <section class="mb-12">
+        <h2 class="text-xl font-bold text-[#f5f5dc] mb-4 flex items-center gap-2">
+          <span class="text-2xl">🔐</span> 认证方式
+        </h2>
+        <div class="bg-[#1a1410] border border-[#3d2f1f] rounded-2xl p-6">
+          <p class="text-[#a0937d] mb-4">所有 API 请求都需要通过 Cookie 认证。登录后会自动获得 session cookie。</p>
+          <div class="bg-black border border-[#3d2f1f] rounded-lg p-4">
+            <p class="text-[#7a6f5d] text-xs mb-2">请求示例</p>
+            <pre class="text-[#f5f5dc] text-sm overflow-x-auto"><code>curl -X POST https://your-domain.com/api/ai/chat \\
+  -H "Content-Type: application/json" \\
+  -b "session=your-session-token" \\
+  -d '{"messages": [{"role": "user", "content": "Hello"}]}'</code></pre>
+          </div>
+        </div>
+      </section>
+
+      <!-- Models Section -->
+      <section class="mb-12">
+        <h2 class="text-xl font-bold text-[#f5f5dc] mb-4 flex items-center gap-2">
+          <span class="text-2xl">🤖</span> 支持的模型
+        </h2>
+        <div class="space-y-4">
+          <div class="bg-[#1a1410] border border-[#3d2f1f] rounded-2xl p-6">
+            <div class="flex items-center gap-3 mb-4">
+              <span class="text-2xl">🌕</span>
+              <h3 class="text-[#f5f5dc] font-bold">Full Moon - 高级模型</h3>
+            </div>
+            <div class="grid md:grid-cols-3 gap-4">
+              <div class="bg-black border border-[#3d2f1f] rounded-lg p-4">
+                <div class="text-[#f5f5dc] font-medium mb-1">GPT-4o</div>
+                <div class="text-[#7a6f5d] text-xs">OpenAI · 128K ctx</div>
+                <div class="text-[#a0937d] text-xs mt-2">¥5/1M in · ¥15/1M out</div>
+              </div>
+              <div class="bg-black border border-[#3d2f1f] rounded-lg p-4">
+                <div class="text-[#f5f5dc] font-medium mb-1">Claude Sonnet 4</div>
+                <div class="text-[#7a6f5d] text-xs">Anthropic · 200K ctx</div>
+                <div class="text-[#a0937d] text-xs mt-2">¥3/1M in · ¥15/1M out</div>
+              </div>
+              <div class="bg-black border border-[#3d2f1f] rounded-lg p-4">
+                <div class="text-[#f5f5dc] font-medium mb-1">Gemini 2.0 Flash</div>
+                <div class="text-[#7a6f5d] text-xs">Google · 1M ctx</div>
+                <div class="text-[#a0937d] text-xs mt-2">免费</div>
+              </div>
+            </div>
+          </div>
+
+          <div class="bg-[#1a1410] border border-[#3d2f1f] rounded-2xl p-6">
+            <div class="flex items-center gap-3 mb-4">
+              <span class="text-2xl">🌓</span>
+              <h3 class="text-[#f5f5dc] font-bold">Half Moon - 高效模型</h3>
+            </div>
+            <div class="grid md:grid-cols-3 gap-4">
+              <div class="bg-black border border-[#3d2f1f] rounded-lg p-4">
+                <div class="text-[#f5f5dc] font-medium mb-1">Kimi Core</div>
+                <div class="text-[#7a6f5d] text-xs">月之暗面 · 128K ctx</div>
+                <div class="text-[#a0937d] text-xs mt-2">¥12/1M</div>
+              </div>
+              <div class="bg-black border border-[#3d2f1f] rounded-lg p-4">
+                <div class="text-[#f5f5dc] font-medium mb-1">MiniMax ABAB 6.5S</div>
+                <div class="text-[#7a6f5d] text-xs">MiniMax · 245K ctx</div>
+                <div class="text-[#a0937d] text-xs mt-2">¥1/1M</div>
+              </div>
+              <div class="bg-black border border-[#3d2f1f] rounded-lg p-4">
+                <div class="text-[#f5f5dc] font-medium mb-1">Qwen Turbo</div>
+                <div class="text-[#7a6f5d] text-xs">阿里 · 131K ctx</div>
+                <div class="text-[#a0937d] text-xs mt-2">¥0.8/1M in · ¥2/1M out</div>
+              </div>
+            </div>
+          </div>
+
+          <div class="bg-[#1a1410] border border-[#3d2f1f] rounded-2xl p-6">
+            <div class="flex items-center gap-3 mb-4">
+              <span class="text-2xl">🌑</span>
+              <h3 class="text-[#f5f5dc] font-bold">New Moon - 轻量模型</h3>
+            </div>
+            <div class="grid md:grid-cols-2 gap-4">
+              <div class="bg-black border border-[#3d2f1f] rounded-lg p-4">
+                <div class="text-[#f5f5dc] font-medium mb-1">GPT-4o Mini (Search)</div>
+                <div class="text-[#7a6f5d] text-xs">OpenAI · 128K ctx</div>
+                <div class="text-[#a0937d] text-xs mt-2">¥0.375/1M in · ¥1.5/1M out</div>
+              </div>
+              <div class="bg-black border border-[#3d2f1f] rounded-lg p-4">
+                <div class="text-[#f5f5dc] font-medium mb-1">Qwen Long</div>
+                <div class="text-[#7a6f5d] text-xs">阿里 · 1M ctx</div>
+                <div class="text-[#a0937d] text-xs mt-2">¥0.8/1M in · ¥2/1M out</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Endpoints Section -->
+      <section class="mb-12">
+        <h2 class="text-xl font-bold text-[#f5f5dc] mb-4 flex items-center gap-2">
+          <span class="text-2xl">📡</span> API 端点
+        </h2>
+        <div class="space-y-4">
+          <div class="bg-[#1a1410] border border-[#3d2f1f] rounded-2xl p-6">
+            <div class="flex items-center gap-3 mb-3">
+              <span class="bg-green-900/30 text-green-200 px-2 py-1 rounded text-xs font-bold">POST</span>
+              <span class="text-[#f5f5dc] font-mono">/api/ai/chat</span>
+            </div>
+            <p class="text-[#a0937d] text-sm mb-4">发送消息并获取 AI 回复，支持自动路由或指定模型</p>
+            <div class="bg-black border border-[#3d2f1f] rounded-lg p-4">
+              <p class="text-[#7a6f5d] text-xs mb-2">请求体</p>
+              <pre class="text-[#f5f5dc] text-sm overflow-x-auto"><code>{
+  "messages": [
+    {"role": "system", "content": "你是一个有帮助的助手"},
+    {"role": "user", "content": "你好"}
+  ],
+  "tier": "🌕",       // 可选：🌕 🌓 🌑
+  "model": "gpt-4o",  // 可选：直接指定模型
+  "temperature": 0.7  // 可选：0-2
+}</code></pre>
+            </div>
+            <div class="bg-black border border-[#3d2f1f] rounded-lg p-4 mt-3">
+              <p class="text-[#7a6f5d] text-xs mb-2">响应示例</p>
+              <pre class="text-[#f5f5dc] text-sm overflow-x-auto"><code>{
+  "content": "你好！有什么可以帮助你的吗？",
+  "model": "gpt-4o",
+  "provider": "openai",
+  "tier": "🌕",
+  "usage": {
+    "inputTokens": 20,
+    "outputTokens": 35,
+    "totalCostUSD": 0.000525
+  }
+}</code></pre>
+            </div>
+          </div>
+
+          <div class="bg-[#1a1410] border border-[#3d2f1f] rounded-2xl p-6">
+            <div class="flex items-center gap-3 mb-3">
+              <span class="bg-blue-900/30 text-blue-200 px-2 py-1 rounded text-xs font-bold">GET</span>
+              <span class="text-[#f5f5dc] font-mono">/api/ai/models</span>
+            </div>
+            <p class="text-[#a0937d] text-sm mb-4">获取所有可用的 AI 模型列表</p>
+          </div>
+
+          <div class="bg-[#1a1410] border border-[#3d2f1f] rounded-2xl p-6">
+            <div class="flex items-center gap-3 mb-3">
+              <span class="bg-blue-900/30 text-blue-200 px-2 py-1 rounded text-xs font-bold">GET</span>
+              <span class="text-[#f5f5dc] font-mono">/api/ai/usage</span>
+            </div>
+            <p class="text-[#a0937d] text-sm mb-4">获取当前用户的 API 使用量和配额</p>
+          </div>
+
+          <div class="bg-[#1a1410] border border-[#3d2f1f] rounded-2xl p-6">
+            <div class="flex items-center gap-3 mb-3">
+              <span class="bg-blue-900/30 text-blue-200 px-2 py-1 rounded text-xs font-bold">GET</span>
+              <span class="text-[#f5f5dc] font-mono">/api/plans</span>
+            </div>
+            <p class="text-[#a0937d] text-sm mb-4">获取所有可用套餐信息</p>
+          </div>
+        </div>
+      </section>
+
+      <!-- Pricing Section -->
+      <section class="mb-12">
+        <h2 class="text-xl font-bold text-[#f5f5dc] mb-4 flex items-center gap-2">
+          <span class="text-2xl">💰</span> 价格说明
+        </h2>
+        <div class="bg-[#1a1410] border border-[#3d2f1f] rounded-2xl p-6">
+          <div class="grid md:grid-cols-3 gap-6">
+            <div class="text-center">
+              <div class="text-3xl mb-2">🌕</div>
+              <div class="text-[#f5f5dc] font-bold mb-1">入门套餐</div>
+              <div class="text-[#f5f5dc] text-2xl font-bold mb-2">¥9.9</div>
+              <div class="text-[#a0937d] text-sm">30次/天</div>
+              <div class="text-[#7a6f5d] text-xs mt-1">高级模型额度</div>
+            </div>
+            <div class="text-center">
+              <div class="text-3xl mb-2">🌓</div>
+              <div class="text-[#f5f5dc] font-bold mb-1">普通套餐</div>
+              <div class="text-[#f5f5dc] text-2xl font-bold mb-2">¥39</div>
+              <div class="text-[#a0937d] text-sm">200次/天</div>
+              <div class="text-[#7a6f5d] text-xs mt-1">高级模型额度</div>
+            </div>
+            <div class="text-center">
+              <div class="text-3xl mb-2">🌑</div>
+              <div class="text-[#f5f5dc] font-bold mb-1">高级套餐</div>
+              <div class="text-[#f5f5dc] text-2xl font-bold mb-2">¥99</div>
+              <div class="text-[#a0937d] text-sm">1000次/天</div>
+              <div class="text-[#7a6f5d] text-xs mt-1">高级模型额度</div>
+            </div>
+          </div>
+          <div class="mt-6 pt-6 border-t border-[#3d2f1f] text-center">
+            <p class="text-[#a0937d] text-sm">🌑 轻量模型不限量使用</p>
+            <p class="text-[#7a6f5d] text-xs mt-1">超额后自动降级到低层级模型</p>
+          </div>
+        </div>
+      </section>
+
+      <!-- SDK Section -->
+      <section class="mb-12">
+        <h2 class="text-xl font-bold text-[#f5f5dc] mb-4 flex items-center gap-2">
+          <span class="text-2xl">📦</span> SDK 示例
+        </h2>
+        <div class="bg-[#1a1410] border border-[#3d2f1f] rounded-2xl p-6">
+          <h3 class="text-[#f5f5dc] font-medium mb-4">JavaScript / Node.js</h3>
+          <div class="bg-black border border-[#3d2f1f] rounded-lg p-4">
+            <pre class="text-[#f5f5dc] text-sm overflow-x-auto"><code>const response = await fetch('/api/ai/chat', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  credentials: 'include',  // 携带 cookie
+  body: JSON.stringify({
+    messages: [
+      { role: 'user', content: '用中文回答' }
+    ],
+    tier: '🌕'
+  })
+});
+
+const data = await response.json();
+console.log(data.content);</code></pre>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    ${footer()}
+  `);
+}
+
 app.get("/health", (c) =>
   c.json({
     ok: true,
@@ -1001,20 +1693,21 @@ app.post("/order/create", async (c) => {
 
   const body = await c.req.parseBody();
   const planName = body.plan as string;
+  const billingCycle = (body.billing_cycle as string) || 'monthly';
 
   if (!planName || !planPrices[planName]) {
     return c.redirect("/order/select");
   }
 
-  const fee = planPrices[planName];
+  const fee = billingCycle === 'yearly' ? planPricesYearly[planName] : planPrices[planName];
   const outTradeNo = generateId();
   const email = user.email;
 
   db.query(
-    "INSERT INTO orders (out_trade_no, plan, fee, email, status) VALUES (?, ?, ?, ?, ?)"
-  ).run(outTradeNo, planName, fee, email, "pending");
+    "INSERT INTO orders (out_trade_no, plan, billing_cycle, fee, email, status) VALUES (?, ?, ?, ?, ?, ?)"
+  ).run(outTradeNo, planName, billingCycle, fee, email, "pending");
 
-  return c.html(orderPage(planName, outTradeNo, fee));
+  return c.html(orderPage(planName, outTradeNo, fee, billingCycle));
 });
 
 app.get("/order/success", async (c) => {
@@ -1034,12 +1727,12 @@ app.get("/order/success", async (c) => {
 
   if (existingSub) {
     db.query(
-      "UPDATE subscriptions SET plan = ?, status = 'active', updated_at = CURRENT_TIMESTAMP WHERE user_id = ?"
-    ).run(order.plan, order.email ?? "");
+      "UPDATE subscriptions SET plan = ?, period = ?, status = 'active', updated_at = CURRENT_TIMESTAMP WHERE user_id = ?"
+    ).run(order.plan, order.billing_cycle, order.email ?? "");
   } else {
     db.query(
-      "INSERT INTO subscriptions (user_id, plan, status) VALUES (?, ?, ?)"
-    ).run(order.email ?? "", order.plan, "active");
+      "INSERT INTO subscriptions (user_id, plan, period, status) VALUES (?, ?, ?, ?)"
+    ).run(order.email ?? "", order.plan, order.billing_cycle, "active");
   }
 
   return c.html(orderSuccessPage(outTradeNo));
@@ -1099,12 +1792,12 @@ app.post("/order/callback", async (c) => {
 
     if (existingSub) {
       db.query(
-        "UPDATE subscriptions SET plan = ?, status = 'active', updated_at = CURRENT_TIMESTAMP WHERE user_id = ?"
-      ).run(order.plan, order.email ?? "");
+        "UPDATE subscriptions SET plan = ?, period = ?, status = 'active', updated_at = CURRENT_TIMESTAMP WHERE user_id = ?"
+      ).run(order.plan, order.billing_cycle, order.email ?? "");
     } else {
       db.query(
-        "INSERT INTO subscriptions (user_id, plan, status) VALUES (?, ?, ?)"
-      ).run(order.email ?? "", order.plan, "active");
+        "INSERT INTO subscriptions (user_id, plan, period, status) VALUES (?, ?, ?, ?)"
+      ).run(order.email ?? "", order.plan, order.billing_cycle, "active");
     }
   } else if (status === "cancelled" || status === "failed") {
     db.query("UPDATE orders SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE out_trade_no = ?").run(status, out_trade_no);
@@ -1133,13 +1826,18 @@ app.get("/api/subscription", async (c) => {
     return c.json({ error: "unauthorized" }, 401);
   }
 
-  const subscription = db.query("SELECT * FROM subscriptions WHERE user_id = ?").get(user.email) as { plan: string; status: string } | undefined;
+  const subscription = db.query("SELECT * FROM subscriptions WHERE user_id = ?").get(user.id) as { plan: string; status: string; expires_at: string | null } | undefined;
+  const expirationWarning = getExpirationWarning(user.id);
 
   if (!subscription) {
-    return c.json({ plan: null, status: "inactive" });
+    return c.json({ plan: null, status: "inactive", expired: false });
   }
 
-  return c.json(subscription);
+  return c.json({
+    ...subscription,
+    expired: isSubscriptionExpired(user.id),
+    expirationWarning
+  });
 });
 
 // AI Chat endpoint with automatic routing
@@ -1147,6 +1845,14 @@ app.post("/api/ai/chat", async (c) => {
   const user = await getUserFromToken(parseSessionCookie(c.req.header("cookie")));
   if (!user) {
     return c.json({ error: "unauthorized" }, 401);
+  }
+
+  // Check if subscription is expired
+  if (isSubscriptionExpired(user.id)) {
+    return c.json({
+      error: "subscription_expired",
+      message: "您的套餐已过期，请续费以继续使用服务。"
+    }, 403);
   }
 
   try {
@@ -1161,16 +1867,33 @@ app.post("/api/ai/chat", async (c) => {
       return c.json({ error: "messages is required and must be a non-empty array" }, 400);
     }
 
-    // Determine which model to use
+    // Get user's AI preferences
+    const userPrefs = db.query(
+      "SELECT * FROM user_ai_preferences WHERE user_id = ?"
+    ).get(user.id) as {
+      preferred_provider: string | null;
+      preferred_model: string | null;
+      preferred_tier: string;
+      use_personal_api_key: number;
+      personal_api_key: string | null;
+    } | undefined;
+
+    // Determine which model to use - respect user preferences
     let selectedModel: string;
     let selectedTier: '🌕' | '🌓' | '🌑';
 
     if (model && MODEL_CONFIGS[model]) {
       selectedModel = model;
       selectedTier = MODEL_CONFIGS[model].tier;
+    } else if (userPrefs?.preferred_model && MODEL_CONFIGS[userPrefs.preferred_model]) {
+      selectedModel = userPrefs.preferred_model;
+      selectedTier = MODEL_CONFIGS[selectedModel].tier;
     } else if (tier && ['🌕', '🌓', '🌑'].includes(tier)) {
       selectedTier = tier;
       selectedModel = DEFAULT_MODELS[tier];
+    } else if (userPrefs?.preferred_tier && ['🌕', '🌓', '🌑'].includes(userPrefs.preferred_tier)) {
+      selectedTier = userPrefs.preferred_tier;
+      selectedModel = DEFAULT_MODELS[selectedTier];
     } else {
       // Default to full moon tier
       selectedTier = '🌕';
@@ -1210,6 +1933,21 @@ app.post("/api/ai/chat", async (c) => {
       temperature: body.temperature,
       maxTokens: body.maxTokens,
     };
+
+    // If user has a preferred provider, route to that provider if possible
+    if (userPrefs?.preferred_provider && !model) {
+      const providerConfig = MODEL_CONFIGS[selectedModel];
+      if (providerConfig && providerConfig.provider !== userPrefs.preferred_provider) {
+        // Find a model from the preferred provider in the same tier
+        const modelEntry = Object.entries(MODEL_CONFIGS).find(
+          ([, cfg]) => cfg.provider === userPrefs.preferred_provider && cfg.tier === selectedTier
+        );
+        if (modelEntry) {
+          selectedModel = modelEntry[0];
+          request.model = selectedModel;
+        }
+      }
+    }
 
     const response = await routeAIRequest(request);
 
@@ -1255,6 +1993,137 @@ app.get("/api/ai/providers", (c) => {
     configured,
     allProviders: ['openai', 'anthropic', 'google', 'kimi', 'minimax', 'qwen'],
   });
+});
+
+// Get user's AI preferences
+app.get("/api/ai/preferences", async (c) => {
+  const user = await getUserFromToken(parseSessionCookie(c.req.header("cookie")));
+  if (!user) {
+    return c.json({ error: "unauthorized" }, 401);
+  }
+
+  const prefs = db.query(
+    "SELECT * FROM user_ai_preferences WHERE user_id = ?"
+  ).get(user.id) as {
+    preferred_provider: string | null;
+    preferred_model: string | null;
+    preferred_tier: string;
+    use_personal_api_key: number;
+    personal_api_key: string | null;
+  } | undefined;
+
+  if (!prefs) {
+    return c.json({
+      preferredProvider: null,
+      preferredModel: null,
+      preferredTier: '🌕',
+      usePersonalApiKey: false,
+      personalApiKey: null,
+    });
+  }
+
+  return c.json({
+    preferredProvider: prefs.preferred_provider,
+    preferredModel: prefs.preferred_model,
+    preferredTier: prefs.preferred_tier,
+    usePersonalApiKey: prefs.use_personal_api_key === 1,
+    personalApiKey: prefs.personal_api_key,
+  });
+});
+
+// Update user's AI preferences
+app.put("/api/ai/preferences", async (c) => {
+  const user = await getUserFromToken(parseSessionCookie(c.req.header("cookie")));
+  if (!user) {
+    return c.json({ error: "unauthorized" }, 401);
+  }
+
+  try {
+    const body = await c.req.json();
+    const {
+      preferredProvider,
+      preferredModel,
+      preferredTier,
+      usePersonalApiKey,
+      personalApiKey,
+    } = body as {
+      preferredProvider?: string;
+      preferredModel?: string;
+      preferredTier?: '🌕' | '🌓' | '🌑';
+      usePersonalApiKey?: boolean;
+      personalApiKey?: string;
+    };
+
+    // Validate tier
+    if (preferredTier && !['🌕', '🌓', '🌑'].includes(preferredTier)) {
+      return c.json({ error: "Invalid tier. Must be 🌕, 🌓, or 🌑" }, 400);
+    }
+
+    // Validate provider
+    const validProviders = ['openai', 'anthropic', 'google', 'kimi', 'minimax', 'qwen'];
+    if (preferredProvider && !validProviders.includes(preferredProvider)) {
+      return c.json({ error: "Invalid provider" }, 400);
+    }
+
+    // Check if preferences exist
+    const existing = db.query(
+      "SELECT id FROM user_ai_preferences WHERE user_id = ?"
+    ).get(user.id);
+
+    const now = new Date().toISOString();
+
+    if (existing) {
+      // Update existing
+      const updates: string[] = ["updated_at = ?"];
+      const values: unknown[] = [now];
+
+      if (preferredProvider !== undefined) {
+        updates.push("preferred_provider = ?");
+        values.push(preferredProvider || null);
+      }
+      if (preferredModel !== undefined) {
+        updates.push("preferred_model = ?");
+        values.push(preferredModel || null);
+      }
+      if (preferredTier !== undefined) {
+        updates.push("preferred_tier = ?");
+        values.push(preferredTier);
+      }
+      if (usePersonalApiKey !== undefined) {
+        updates.push("use_personal_api_key = ?");
+        values.push(usePersonalApiKey ? 1 : 0);
+      }
+      if (personalApiKey !== undefined) {
+        updates.push("personal_api_key = ?");
+        values.push(personalApiKey || null);
+      }
+
+      values.push(user.id);
+      db.query(`UPDATE user_ai_preferences SET ${updates.join(", ")} WHERE user_id = ?`).run(...values);
+    } else {
+      // Insert new
+      const id = generateId();
+      db.query(`
+        INSERT INTO user_ai_preferences (id, user_id, preferred_provider, preferred_model, preferred_tier, use_personal_api_key, personal_api_key, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        id,
+        user.id,
+        preferredProvider || null,
+        preferredModel || null,
+        preferredTier || '🌕',
+        usePersonalApiKey ? 1 : 0,
+        personalApiKey || null,
+        now,
+        now
+      );
+    }
+
+    return c.json({ success: true });
+  } catch (err) {
+    console.error("Update preferences error:", err);
+    return c.json({ error: "Failed to update preferences" }, 500);
+  }
 });
 
 // Get user's AI usage stats
