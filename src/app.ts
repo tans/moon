@@ -1,15 +1,5 @@
 import { Hono } from "hono";
 import { db } from "./db";
-import { randomUUID } from "node:crypto";
-
-const ONEPAY_BASE_URL = process.env.ONEPAY_BASE_URL ?? "https://onepay.minapp.xin";
-const PAYMENT_NOTIFY_URL = process.env.PAYMENT_NOTIFY_URL ?? "";
-
-const planPrices: Record<string, number> = {
-  "入门": 990,   // ¥9.9 in fen
-  "普通": 3900,  // ¥39 in fen
-  "高级": 9900,  // ¥99 in fen
-};
 
 const plans = [
   {
@@ -184,7 +174,7 @@ function moonPage() {
         </div>
         <div class="actions" style="margin-top: 0;">
           <a class="button" href="/login">登录</a>
-          <a class="button primary" href="#plans">开始体验</a>
+          <a class="button primary" href="/register">注册</a>
         </div>
       </header>
 
@@ -197,8 +187,8 @@ function moonPage() {
             高层额度用完后自动降级，保证服务不断线。
           </p>
           <div class="actions">
-            <a class="button primary" href="#plans">查看套餐</a>
-            <a class="button" href="#tiers">查看模型层级</a>
+            <a class="button primary" href="/register">立即注册</a>
+            <a class="button" href="#plans">查看套餐</a>
           </div>
         </div>
         <div class="orb card">
@@ -289,66 +279,39 @@ function loginPage() {
     <title>MOON | 登录</title>
     <style>
       :root {
-        --bg: #fffaf5;
-        --panel: rgba(255, 255, 255, 0.88);
-        --text: #2b2333;
-        --muted: #7f6f7d;
-        --primary: #f08787;
-        --line: #f0ddd3;
-        --shadow: 0 20px 60px rgba(70, 40, 50, 0.12);
+        --bg: #fffaf5; --panel: rgba(255,255,255,.88); --text: #2b2333;
+        --muted: #7f6f7d; --primary: #f08787; --line: #f0ddd3;
+        --shadow: 0 20px 60px rgba(70,40,50,.12);
       }
       * { box-sizing: border-box; }
       body {
         margin: 0;
         font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
         color: var(--text);
-        background:
-          radial-gradient(circle at top left, rgba(240, 135, 135, 0.16), transparent 30%),
-          radial-gradient(circle at top right, rgba(255, 199, 167, 0.26), transparent 28%),
+        background: radial-gradient(circle at top left, rgba(240,135,135,.16), transparent 30%),
+          radial-gradient(circle at top right, rgba(255,199,167,.26), transparent 28%),
           linear-gradient(180deg, #fffdf9 0%, var(--bg) 100%);
       }
       a { color: inherit; text-decoration: none; }
       .wrap { max-width: 960px; margin: 0 auto; padding: 24px; min-height: 100vh; display: grid; align-items: center; }
-      .panel {
-        border: 1px solid var(--line);
-        background: var(--panel);
-        box-shadow: var(--shadow);
-        backdrop-filter: blur(16px);
-        border-radius: 32px;
-        padding: 28px;
-      }
+      .panel { border: 1px solid var(--line); background: var(--panel); box-shadow: var(--shadow); backdrop-filter: blur(16px); border-radius: 32px; padding: 28px; }
       .row { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
       .brand { display: flex; align-items: center; gap: 14px; font-weight: 700; }
-      .logo {
-        width: 46px; height: 46px; border-radius: 999px;
-        background: radial-gradient(circle at 30% 30%, #fff7eb, #f8d9cb 55%, #f08787 100%);
-        box-shadow: inset 0 1px 2px rgba(255,255,255,.5);
-        position: relative;
-      }
-      .logo::after {
-        content: ""; position: absolute; inset: 11px 0 11px 18px;
-        border-radius: 999px; background: rgba(255,255,255,.96);
-      }
-      .button {
-        display: inline-flex; align-items: center; justify-content: center;
-        padding: 12px 18px; border-radius: 999px; font-weight: 600;
-        border: 1px solid var(--line); background: #fff;
-      }
+      .logo { width: 46px; height: 46px; border-radius: 999px; background: radial-gradient(circle at 30% 30%, #fff7eb, #f8d9cb 55%, #f08787 100%); box-shadow: inset 0 1px 2px rgba(255,255,255,.5); position: relative; }
+      .logo::after { content: ""; position: absolute; inset: 11px 0 11px 18px; border-radius: 999px; background: rgba(255,255,255,.96); }
+      .button { display: inline-flex; align-items: center; justify-content: center; padding: 12px 18px; border-radius: 999px; font-weight: 600; border: 1px solid var(--line); background: #fff; }
       .button.primary { background: var(--primary); color: #fff; border-color: transparent; }
       .grid { display: grid; gap: 18px; margin-top: 28px; grid-template-columns: repeat(2, minmax(0, 1fr)); }
       .card { border: 1px solid var(--line); border-radius: 28px; padding: 24px; background: rgba(255,255,255,.78); }
       .kicker { color: #b66f61; font-size: 14px; letter-spacing: .08em; text-transform: uppercase; }
-      .title { margin: 10px 0 8px; font-size: 30px; letter-spacing: -.04em; }
+      .title { margin: 10px 0 8px; font-size: 28px; letter-spacing: -.04em; }
       .muted { color: var(--muted); line-height: 1.7; }
       .field { display: grid; gap: 8px; margin-top: 16px; }
-      .field input {
-        width: 100%; border-radius: 16px; border: 1px solid var(--line);
-        padding: 14px 16px; font-size: 15px; outline: none; background: #fff;
-      }
-      .field input:focus { border-color: #f08787; box-shadow: 0 0 0 3px rgba(240, 135, 135, 0.12); }
+      .field input { width: 100%; border-radius: 16px; border: 1px solid var(--line); padding: 14px 16px; font-size: 15px; outline: none; background: #fff; }
+      .field input:focus { border-color: #f08787; box-shadow: 0 0 0 3px rgba(240,135,135,.12); }
       .actions { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 18px; }
       .note { margin-top: 18px; font-size: 13px; color: var(--muted); }
-      @media (max-width: 860px) { .grid { grid-template-columns: 1fr; } .title { font-size: 26px; } }
+      @media (max-width: 860px) { .grid { grid-template-columns: 1fr; } .title { font-size: 24px; } }
     </style>
   </head>
   <body>
@@ -358,75 +321,116 @@ function loginPage() {
           <div class="brand">
             <div class="logo" aria-hidden="true"></div>
             <div>
-              <div style="font-size: 18px;">MOON</div>
-              <div style="font-size: 12px; color: var(--muted); font-weight: 500;">Model Always Online</div>
+              <div style="font-size:18px;">MOON</div>
+              <div style="font-size:12px;color:var(--muted);font-weight:500;">Model Always Online</div>
             </div>
           </div>
           <a class="button" href="/">返回首页</a>
         </div>
-
-        <div style="margin-top: 26px; max-width: 700px;">
+        <div style="margin-top:26px;max-width:700px;">
           <div class="kicker">Access Portal</div>
           <h1 class="title">登录或注册，继续使用 MOON</h1>
-          <p class="muted">
-            这里提供一个明确的入口，方便进入后台或创建账号。后续可接入真实认证服务。
-          </p>
         </div>
-
         <div class="grid">
           <article class="card">
             <div class="kicker">登录</div>
-            <h2 class="title" style="font-size: 24px;">已有账号</h2>
+            <h2 class="title" style="font-size:24px;">已有账号</h2>
             <p class="muted">输入邮箱和密码进入系统。</p>
-            <div class="field">
-              <label>
-                <div class="kicker">邮箱</div>
-                <input type="email" placeholder="name@example.com" />
-              </label>
-            </div>
-            <div class="field">
-              <label>
-                <div class="kicker">密码</div>
-                <input type="password" placeholder="输入密码" />
-              </label>
-            </div>
-            <div class="actions">
-              <a class="button primary" href="/admin/login">登录管理后台</a>
-            </div>
+            <div class="field"><label><div class="kicker">邮箱</div><input type="email" placeholder="name@example.com" /></label></div>
+            <div class="field"><label><div class="kicker">密码</div><input type="password" placeholder="输入密码" /></label></div>
+            <div class="actions"><button class="button primary">登录</button></div>
           </article>
-
           <article class="card">
             <div class="kicker">注册</div>
-            <h2 class="title" style="font-size: 24px;">新用户</h2>
-            <p class="muted">先创建账号，再生成 secret key。</p>
-            <div class="field">
-              <label>
-                <div class="kicker">用户名</div>
-                <input type="text" placeholder="输入用户名" />
-              </label>
-            </div>
-            <div class="field">
-              <label>
-                <div class="kicker">邮箱</div>
-                <input type="email" placeholder="name@example.com" />
-              </label>
-            </div>
-            <div class="actions">
-              <a class="button primary" href="/">去首页</a>
-            </div>
+            <h2 class="title" style="font-size:24px;">新用户</h2>
+            <p class="muted">创建账号后可订阅套餐。</p>
+            <div class="actions"><a class="button primary" href="/register">去注册页</a></div>
           </article>
         </div>
-
-        <p class="note">如果你只是想先看产品，也可以直接返回首页查看套餐和模型路由。</p>
+        <p class="note">只是想看产品？<a href="/" style="color:var(--primary);">返回首页</a></p>
       </section>
     </div>
   </body>
 </html>`;
 }
 
+function registerPage() {
+  return `<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="MOON 注册入口。Model Always Online." />
+    <title>MOON | 注册</title>
+    <style>
+      :root {
+        --bg: #fffaf5; --panel: rgba(255,255,255,.88); --text: #2b2333;
+        --muted: #7f6f7d; --primary: #f08787; --line: #f0ddd3;
+        --shadow: 0 20px 60px rgba(70,40,50,.12);
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        color: var(--text);
+        background: radial-gradient(circle at top left, rgba(240,135,135,.16), transparent 30%),
+          radial-gradient(circle at top right, rgba(255,199,167,.26), transparent 28%),
+          linear-gradient(180deg, #fffdf9 0%, var(--bg) 100%);
+      }
+      a { color: inherit; text-decoration: none; }
+      .wrap { max-width: 960px; margin: 0 auto; padding: 24px; min-height: 100vh; display: grid; align-items: center; }
+      .panel { border: 1px solid var(--line); background: var(--panel); box-shadow: var(--shadow); backdrop-filter: blur(16px); border-radius: 32px; padding: 28px; }
+      .row { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+      .brand { display: flex; align-items: center; gap: 14px; font-weight: 700; }
+      .logo { width: 46px; height: 46px; border-radius: 999px; background: radial-gradient(circle at 30% 30%, #fff7eb, #f8d9cb 55%, #f08787 100%); box-shadow: inset 0 1px 2px rgba(255,255,255,.5); position: relative; }
+      .logo::after { content: ""; position: absolute; inset: 11px 0 11px 18px; border-radius: 999px; background: rgba(255,255,255,.96); }
+      .button { display: inline-flex; align-items: center; justify-content: center; padding: 12px 18px; border-radius: 999px; font-weight: 600; border: 1px solid var(--line); background: #fff; cursor: pointer; font-size: 15px; }
+      .button.primary { background: var(--primary); color: #fff; border-color: transparent; }
+      .card { border: 1px solid var(--line); border-radius: 28px; padding: 24px; background: rgba(255,255,255,.78); max-width: 480px; margin-top: 28px; }
+      .kicker { color: #b66f61; font-size: 14px; letter-spacing: .08em; text-transform: uppercase; }
+      .title { margin: 10px 0 8px; font-size: 28px; letter-spacing: -.04em; }
+      .muted { color: var(--muted); line-height: 1.7; }
+      .field { display: grid; gap: 8px; margin-top: 16px; }
+      .field input { width: 100%; border-radius: 16px; border: 1px solid var(--line); padding: 14px 16px; font-size: 15px; outline: none; background: #fff; }
+      .field input:focus { border-color: #f08787; box-shadow: 0 0 0 3px rgba(240,135,135,.12); }
+      .actions { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 18px; }
+      .note { margin-top: 18px; font-size: 13px; color: var(--muted); }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <section class="panel">
+        <div class="row">
+          <div class="brand">
+            <div class="logo" aria-hidden="true"></div>
+            <div>
+              <div style="font-size:18px;">MOON</div>
+              <div style="font-size:12px;color:var(--muted);font-weight:500;">Model Always Online</div>
+            </div>
+          </div>
+          <a class="button" href="/">返回首页</a>
+        </div>
+        <div style="margin-top:26px;">
+          <div class="kicker">新用户注册</div>
+          <h1 class="title">创建账号，开始使用 MOON</h1>
+          <p class="muted">创建账号后可订阅套餐并生成 API Key。</p>
+        </div>
+        <article class="card">
+          <div class="field"><label><div class="kicker">用户名</div><input type="text" placeholder="输入用户名" /></label></div>
+          <div class="field"><label><div class="kicker">邮箱</div><input type="email" placeholder="name@example.com" /></label></div>
+          <div class="field"><label><div class="kicker">密码</div><input type="password" placeholder="设置密码" /></label></div>
+          <div class="actions"><button class="button primary">注册</button></div>
+        </article>
+        <p class="note">已有账号？<a href="/login" style="color:var(--primary);">直接登录</a></p>
+      </section>
+    </div>
+  </body>
+</html>`;
+}
 app.get("/", (c) => c.html(moonPage()));
 app.get("/login", (c) => c.html(loginPage()));
 app.get("/admin/login", (c) => c.html(loginPage()));
+app.get("/register", (c) => c.html(registerPage()));
 
 app.get("/health", (c) =>
   c.json({
@@ -450,135 +454,6 @@ app.get("/api/stats", (c) => {
   return c.json({
     users: userCount.count,
     subscriptions: subscriptionCount.count,
-  });
-});
-
-// Create payment order
-app.post("/api/create-order", async (c) => {
-  const { plan, email } = await c.req.json<{ plan: string; email: string }>();
-
-  if (!plan || !planPrices[plan]) {
-    return c.json({ error: "Invalid plan" }, 400);
-  }
-
-  const outTradeNo = `MOON_${Date.now()}_${randomUUID().slice(0, 8)}`;
-  const fee = planPrices[plan];
-  const title = `MOON ${plan} 订阅`;
-
-  const notifyUrl = PAYMENT_NOTIFY_URL || undefined;
-
-  try {
-    const response = await fetch(`${ONEPAY_BASE_URL}/api/create-order`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        fee,
-        outTradeNo,
-        title,
-        notifyUrl,
-        email,
-      }),
-    });
-
-    if (!response.ok) {
-      const error = await response.text();
-      return c.json({ error: "Failed to create order", details: error }, 500);
-    }
-
-    const data = await response.json() as { paymentUrl: string; order: { id: string; _id: string; fee: number; outTradeNo: string } };
-
-    // Store order in local database
-    db.prepare(`
-      INSERT OR REPLACE INTO orders (out_trade_no, onepay_id, plan, fee, email, status, created_at)
-      VALUES (?, ?, ?, ?, ?, 'pending', CURRENT_TIMESTAMP)
-    `).run(outTradeNo, data.order._id || data.order.id, plan, fee, email || "");
-
-    return c.json({
-      paymentUrl: data.paymentUrl,
-      outTradeNo,
-      orderId: data.order.id || data.order._id,
-    });
-  } catch (error) {
-    console.error("Create order error:", error);
-    return c.json({ error: "Failed to create order" }, 500);
-  }
-});
-
-// Payment notify callback from OnePay
-app.post("/api/payment/notify", async (c) => {
-  try {
-    const order = await c.req.json<{
-      id: string;
-      outTradeNo: string;
-      fee: number;
-      status: string;
-      email?: string;
-    }>();
-
-    if (order.status === "paid" || order.status === "success") {
-      // Update order status
-      db.prepare(`
-        UPDATE orders SET status = 'paid', updated_at = CURRENT_TIMESTAMP
-        WHERE out_trade_no = ? OR onepay_id = ?
-      `).run(order.outTradeNo, order.id);
-
-      // Get or create user
-      const email = order.email || "";
-      let user = email ? db.query("SELECT id FROM users WHERE email = ?").get(email) as { id: string } | undefined : undefined;
-
-      if (!user && email) {
-        const userId = randomUUID();
-        db.prepare("INSERT INTO users (id, email) VALUES (?, ?)").run(userId, email);
-        user = { id: userId };
-      }
-
-      if (user) {
-        // Get plan from order
-        const orderRecord = db.query("SELECT plan FROM orders WHERE out_trade_no = ? OR onepay_id = ?").get(order.outTradeNo, order.id) as { plan: string } | undefined;
-
-        if (orderRecord) {
-          // Create or update subscription
-          db.prepare(`
-            INSERT INTO subscriptions (id, user_id, plan, status, updated_at)
-            VALUES (?, ?, ?, 'active', CURRENT_TIMESTAMP)
-            ON CONFLICT(user_id) DO UPDATE SET
-              plan = excluded.plan,
-              status = 'active',
-              updated_at = CURRENT_TIMESTAMP
-          `).run(randomUUID(), user.id, orderRecord.plan);
-        }
-      }
-
-      return c.json({ received: true });
-    }
-
-    return c.json({ received: true });
-  } catch (error) {
-    console.error("Payment notify error:", error);
-    return c.json({ error: "Notify failed" }, 500);
-  }
-});
-
-// Query order status
-app.get("/api/orders/:outTradeNo/status", (c) => {
-  const { outTradeNo } = c.req.param();
-
-  const order = db.query("SELECT * FROM orders WHERE out_trade_no = ?").get(outTradeNo) as {
-    out_trade_no: string;
-    status: string;
-    plan: string;
-    fee: number;
-  } | undefined;
-
-  if (!order) {
-    return c.json({ error: "Order not found" }, 404);
-  }
-
-  return c.json({
-    outTradeNo: order.out_trade_no,
-    status: order.status,
-    plan: order.plan,
-    fee: order.fee,
   });
 });
 
