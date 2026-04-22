@@ -11,35 +11,57 @@ export async function callModel(
   source: ModelSource,
   body: Record<string, unknown>
 ): Promise<ProxyResponse> {
-  const url = `${source.baseURL}/chat/completions`;
+  const isAnthropic = source.provider === "anthropic";
+  const url = isAnthropic
+    ? `${source.baseURL}/v1/messages`
+    : `${source.baseURL}/chat/completions`;
+
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+  };
+
+  if (isAnthropic) {
+    headers["x-api-key"] = source.apiKey;
+    headers["anthropic-version"] = "2023-06-01";
+  } else {
+    headers["Authorization"] = `Bearer ${source.apiKey}`;
+  }
 
   const response = await fetch(url, {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "Authorization": `Bearer ${source.apiKey}`,
-    },
+    headers,
     body: JSON.stringify(body),
-    signal: AbortSignal.timeout(30000), // 添加超时
+    signal: AbortSignal.timeout(30000),
   });
+
+  const responseClone = response.clone();
 
   let data: unknown;
   try {
     data = await response.json();
   } catch {
-    data = await response.text();
+    try {
+      data = await responseClone.text();
+    } catch (e: unknown) {
+      return {
+        ok: false,
+        status: response.status,
+        data: { error: { message: `Failed to read response: ${e}` } },
+        headers: {},
+      };
+    }
   }
 
-  const headers: Record<string, string> = {};
+  const respHeaders: Record<string, string> = {};
   response.headers.forEach((value, key) => {
-    headers[key] = value;
+    respHeaders[key] = value;
   });
 
   return {
     ok: response.ok,
     status: response.status,
     data,
-    headers,
+    headers: respHeaders,
   };
 }
 
@@ -47,14 +69,25 @@ export async function callModelStream(
   source: ModelSource,
   body: Record<string, unknown>
 ): Promise<Response> {
-  const url = `${source.baseURL}/chat/completions`;
+  const isAnthropic = source.provider === "anthropic";
+  const url = isAnthropic
+    ? `${source.baseURL}/v1/messages`
+    : `${source.baseURL}/chat/completions`;
+
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+  };
+
+  if (isAnthropic) {
+    headers["x-api-key"] = source.apiKey;
+    headers["anthropic-version"] = "2023-06-01";
+  } else {
+    headers["Authorization"] = `Bearer ${source.apiKey}`;
+  }
 
   const response = await fetch(url, {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "Authorization": `Bearer ${source.apiKey}`,
-    },
+    headers,
     body: JSON.stringify({ ...body, stream: true }),
   });
 

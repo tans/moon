@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { db } from "./db";
 import { authenticate } from "./auth";
-import { parseRequest } from "./parser";
+import { parseRequest, type ChatMessage } from "./parser";
 import { convertRequest } from "./convert";
 import { callModel, callModelStream } from "./proxy";
 import { recordUsage } from "./usage";
@@ -803,5 +803,180 @@ app.post("/v1/chat/completions", handleAIRequest);
 
 // Anthropic 兼容路由
 app.post("/v1/messages", handleAIRequest);
+
+// Responses API (Codex) 路由
+app.post("/v1/responses", handleResponsesRequest);
+
+async function handleResponsesRequest(c: any) {
+  const auth = authenticate(c.req.header("Authorization"));
+  if (!auth) {
+    return c.json({ error: { message: "Invalid API key" } }, 401);
+  }
+
+  try {
+    const body = await c.req.json();
+    const stream = body.stream === true;
+    const model = body.model || "MiniMax-M2.7";
+
+    // Build messages from input (Responses API format)
+    let messages: ChatMessage[] = [];
+    if (typeof body.input === "string") {
+      messages = [{ role: "user", content: body.input }];
+    } else if (Array.isArray(body.input)) {
+      messages = body.input.map((item: any) => {
+        if (item.type === "text") {
+          return { role: "user", content: item.text };
+        }
+        return { role: "user", content: JSON.stringify(item) };
+      });
+    }
+
+    // Determine tier from model
+    let tier: "L1" | "L2" | "L3" = auth.tier;
+    const source = config[tier.toLowerCase() as "l1" | "l2" | "l3"];
+    if (!source) {
+      return c.json({ error: { message: `Tier ${tier} not configured` } }, 500);
+    }
+
+    const requestBody = {
+      model: source.model,
+      messages,
+      stream,
+    };
+
+    if (stream) {
+      const streamResponse = await callModelStream(source, requestBody);
+      recordUsage(auth.userId, tier, source.model);
+
+      // Convert Anthropic SSE stream to Responses API format
+      const encoder = new TextEncoder();
+      const stream_body = streamResponse.body;
+      let buffer = "";
+
+      const readable = new ReadableStream({
+        async start(controller) {
+          const reader = stream_body.getReader();
+          try {
+            while (true) {
+              const { done, value } = await reader.read();
+              if (done) break;
+
+              buffer += new TextDecoder().decode(value);
+              const lines = buffer.split("\n");
+              buffer = lines.pop() || "";
+
+              for (const line of lines) {
+                if (line.startsWith("event: ")) {
+                  const eventType = line.slice(7).trim();
+                  // Store event type for next data line
+                  (controller as any)._lastEvent = eventType;
+                } else if (line.startsWith("data: ")) {
+                  const data = line.slice(6).trim();
+                  if (data === "[DONE]") {
+                    controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+                    continue;
+                  }
+
+                  const lastEvent = (controller as any)._lastEvent || "";
+                  try {
+                    const parsed = JSON.parse(data);
+
+                    if (lastEvent === "content_block_delta") {
+                      const delta = parsed.delta?.text || "";
+                      if (delta) {
+                        const response_event = {
+                          type: "content_block_delta",
+                          delta: { type: "text", text: delta },
+                        };
+                        controller.enqueue(encoder.encode(`data: ${JSON.stringify(response_event)}\n\n`));
+                      }
+                    } else if (lastEvent === "message_delta" && parsed.usage) {
+                      // Final usage stats
+                      const usage_event = { type: "message_delta", usage: parsed.usage, delta: parsed.delta };
+                      controller.enqueue(encoder.encode(`data: ${JSON.stringify(usage_event)}\n\n`));
+                    }
+                  } catch {}
+                }
+              }
+            }
+          } finally {
+            reader.releaseLock();
+          }
+          controller.close();
+        },
+      });
+
+      return new Response(readable, {
+        headers: {
+          "Content-Type": "text/event-stream",
+          "Cache-Control": "no-cache",
+          "Connection": "keep-alive",
+        },
+      });
+    }
+
+    const converted = convertRequest({ ...body, messages }, source.provider, source.model);
+    const result = await callModel(source, converted.body);
+    recordUsage(auth.userId, tier, source.model);
+
+    if (!result.ok) {
+      return c.json(result.data, result.status);
+    }
+
+    // Convert response to Responses API format
+    const response_data = {
+      id: `resp_${crypto.randomUUID().slice(0, 8)}`,
+      model: model,
+      model_slug: model,
+      type: "message",
+      role: "assistant",
+      content: [
+        {
+          type: "output_text",
+          text: extractTextFromResponse(result.data),
+        },
+      ],
+      stop_reason: "end_turn",
+      stop_sequence: null,
+      usage: {
+        input_tokens: 0,
+        output_tokens: 0,
+      },
+    };
+
+    return c.json(response_data, result.status);
+  } catch (err: unknown) {
+    console.error("Responses request error:", err);
+    return c.json({ error: { message: "Internal server error" } }, 500);
+  }
+}
+
+function extractTextFromResponse(data: unknown): string {
+  if (typeof data === "object" && data !== null) {
+    const d = data as Record<string, unknown>;
+    // OpenAI format
+    if (d.choices && Array.isArray(d.choices)) {
+      const choice = d.choices[0] as Record<string, unknown>;
+      if (choice.message) {
+        const msg = choice.message as Record<string, unknown>;
+        if (typeof msg.content === "string") return msg.content;
+      }
+      if (choice.delta) {
+        const delta = choice.delta as Record<string, unknown>;
+        if (typeof delta.content === "string") return delta.content;
+      }
+    }
+    // Anthropic format: content is array with objects having type and text/thinking
+    if (d.content && Array.isArray(d.content)) {
+      const content = d.content as Array<Record<string, unknown>>;
+      for (const block of content) {
+        if (block.type === "text" && block.text) {
+          return block.text as string;
+        }
+      }
+    }
+  }
+  return "";
+}
 
 export default app;

@@ -18,7 +18,7 @@ export function openaiToAnthropic(req: OpenAIRequest, targetModel: string): Conv
     provider: "anthropic",
     body: {
       model: targetModel,
-      prompt: messagesToAnthropicPrompt(req.messages),
+      messages: req.messages,
       max_tokens: 4096,
       stream: req.stream,
     },
@@ -51,7 +51,7 @@ export function convertRequest(
     return anthropicToOpenAI(req as AnthropicRequest, targetModel);
   }
 
-  // 同格式或未知格式，直接传递
+  // Same format or unknown format, pass through
   const body = { ...req } as Record<string, unknown>;
   if (body.model) body.model = targetModel;
   return {
