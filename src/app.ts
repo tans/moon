@@ -55,6 +55,23 @@ const modelTiers = [
 const app = new Hono();
 
 function baseHtml(content: string) {
+  const navScript = `<script>
+    async function updateNav() {
+      try {
+        const res = await fetch('/api/dashboard');
+        if (!res.ok) return;
+        const navLinks = document.querySelector('nav .flex.items-center.gap-6');
+        if (!navLinks) return;
+        navLinks.innerHTML = '<a href="/" class="hover:text-[#d4c4a8] text-[#a0937d]">首页</a><a href="/pricing" class="hover:text-[#d4c4a8] text-[#a0937d]">套餐</a><a href="/dashboard" class="hover:text-[#d4c4a8] text-[#a0937d]">后台</a><button id="logout-btn" class="text-[#a0937d] hover:text-[#f5f5dc]">退出</button>';
+        document.getElementById('logout-btn')?.addEventListener('click', async () => {
+          await fetch('/api/auth/logout', { method: 'POST' });
+          window.location.href = '/';
+        });
+      } catch (e) {}
+    }
+    updateNav();
+  </script>`;
+
   return `<!doctype html>
 <html lang="zh-CN" data-theme="coffee">
   <head>
@@ -70,11 +87,12 @@ function baseHtml(content: string) {
   </head>
   <body class="bg-black text-[#f5f5dc] min-h-screen">
     ${content}
+    ${navScript}
   </body>
 </html>`;
 }
 
-function navbar(currentPath: string = "/") {
+function navbar(currentPath: string = "/", isLoggedIn: boolean = false) {
   return `
   <nav class="border-b border-[#3d2f1f] px-4 py-4">
     <div class="max-w-5xl mx-auto flex items-center justify-between">
@@ -85,9 +103,13 @@ function navbar(currentPath: string = "/") {
       <div class="flex items-center gap-6 text-sm">
         <a href="/" class="hover:text-[#d4c4a8] ${currentPath === '/' ? 'text-[#f5f5dc] font-semibold' : 'text-[#a0937d]'}">首页</a>
         <a href="/pricing" class="hover:text-[#d4c4a8] ${currentPath === '/pricing' ? 'text-[#f5f5dc] font-semibold' : 'text-[#a0937d]'}">套餐</a>
-        <a href="/dashboard" class="hover:text-[#d4c4a8] ${currentPath === '/dashboard' ? 'text-[#f5f5dc] font-semibold' : 'text-[#a0937d]'}">后台</a>
-        <a href="/login" class="text-[#a0937d] hover:text-[#f5f5dc]">登录</a>
-        <a href="/register" class="bg-[#f5f5dc] text-black px-4 py-2 rounded-full text-sm font-medium hover:bg-[#d4c4a8]">注册</a>
+        ${isLoggedIn ? `
+          <a href="/dashboard" class="hover:text-[#d4c4a8] ${currentPath === '/dashboard' ? 'text-[#f5f5dc] font-semibold' : 'text-[#a0937d]'}">后台</a>
+          <button id="logout-btn" class="text-[#a0937d] hover:text-[#f5f5dc]">退出</button>
+        ` : `
+          <a href="/login" class="text-[#a0937d] hover:text-[#f5f5dc]">登录</a>
+          <a href="/register" class="bg-[#f5f5dc] text-black px-4 py-2 rounded-full text-sm font-medium hover:bg-[#d4c4a8]">注册</a>
+        `}
       </div>
     </div>
   </nav>`;
@@ -235,17 +257,19 @@ function loginPage() {
       </div>
 
       <div class="bg-[#1a1410] border border-[#3d2f1f] rounded-2xl p-6">
-        <form class="space-y-4">
+        <form id="login-form" class="space-y-4">
           <div>
             <label class="text-[#a0937d] text-sm block mb-2">邮箱</label>
-            <input type="email" placeholder="your@email.com" class="w-full bg-black border border-[#3d2f1f] rounded-lg px-4 py-3 text-[#f5f5dc] placeholder-[#5a4d3d] focus:border-[#f5f5dc] outline-none" />
+            <input type="email" id="email" placeholder="your@email.com" required class="w-full bg-black border border-[#3d2f1f] rounded-lg px-4 py-3 text-[#f5f5dc] placeholder-[#5a4d3d] focus:border-[#f5f5dc] outline-none" />
           </div>
           <div>
             <label class="text-[#a0937d] text-sm block mb-2">密码</label>
-            <input type="password" placeholder="••••••••" class="w-full bg-black border border-[#3d2f1f] rounded-lg px-4 py-3 text-[#f5f5dc] placeholder-[#5a4d3d] focus:border-[#f5f5dc] outline-none" />
+            <input type="password" id="password" placeholder="••••••••" required class="w-full bg-black border border-[#3d2f1f] rounded-lg px-4 py-3 text-[#f5f5dc] placeholder-[#5a4d3d] focus:border-[#f5f5dc] outline-none" />
           </div>
           <button type="submit" class="w-full bg-[#f5f5dc] text-black py-3 rounded-full font-medium hover:bg-[#d4c4a8]">登录</button>
         </form>
+
+        <div id="message" class="mt-4 text-center text-sm hidden"></div>
 
         <div class="mt-6 text-center text-[#7a6f5d] text-sm">
           还没有账号？<a href="/register" class="text-[#f5f5dc] hover:underline">立即注册</a>
@@ -254,6 +278,42 @@ function loginPage() {
     </main>
 
     ${footer()}
+
+    <script>
+      document.getElementById('login-form').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const email = document.getElementById('email').value;
+        const password = document.getElementById('password').value;
+        const message = document.getElementById('message');
+        const btn = e.target.querySelector('button');
+
+        btn.disabled = true;
+        btn.textContent = '登录中...';
+        message.classList.add('hidden');
+
+        try {
+          const res = await fetch('/api/auth/login', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ email, password })
+          });
+          const data = await res.json();
+
+          if (res.ok) {
+            window.location.href = '/dashboard';
+          } else {
+            message.className = 'mt-4 text-center text-sm text-red-400';
+            message.textContent = data.error || '登录失败';
+          }
+        } catch (err) {
+          message.className = 'mt-4 text-center text-sm text-red-400';
+          message.textContent = '网络错误';
+        } finally {
+          btn.disabled = false;
+          btn.textContent = '登录';
+        }
+      });
+    </script>
   `);
 }
 
@@ -269,17 +329,19 @@ function registerPage() {
       </div>
 
       <div class="bg-[#1a1410] border border-[#3d2f1f] rounded-2xl p-6">
-        <form class="space-y-4">
+        <form id="register-form" class="space-y-4">
           <div>
             <label class="text-[#a0937d] text-sm block mb-2">邮箱</label>
-            <input type="email" placeholder="your@email.com" class="w-full bg-black border border-[#3d2f1f] rounded-lg px-4 py-3 text-[#f5f5dc] placeholder-[#5a4d3d] focus:border-[#f5f5dc] outline-none" />
+            <input type="email" id="email" placeholder="your@email.com" required class="w-full bg-black border border-[#3d2f1f] rounded-lg px-4 py-3 text-[#f5f5dc] placeholder-[#5a4d3d] focus:border-[#f5f5dc] outline-none" />
           </div>
           <div>
             <label class="text-[#a0937d] text-sm block mb-2">密码</label>
-            <input type="password" placeholder="设置密码" class="w-full bg-black border border-[#3d2f1f] rounded-lg px-4 py-3 text-[#f5f5dc] placeholder-[#5a4d3d] focus:border-[#f5f5dc] outline-none" />
+            <input type="password" id="password" placeholder="设置密码" required minlength="6" class="w-full bg-black border border-[#3d2f1f] rounded-lg px-4 py-3 text-[#f5f5dc] placeholder-[#5a4d3d] focus:border-[#f5f5dc] outline-none" />
           </div>
           <button type="submit" class="w-full bg-[#f5f5dc] text-black py-3 rounded-full font-medium hover:bg-[#d4c4a8]">注册</button>
         </form>
+
+        <div id="message" class="mt-4 text-center text-sm hidden"></div>
 
         <div class="mt-6 text-center text-[#7a6f5d] text-sm">
           已有账号？<a href="/login" class="text-[#f5f5dc] hover:underline">立即登录</a>
@@ -288,6 +350,42 @@ function registerPage() {
     </main>
 
     ${footer()}
+
+    <script>
+      document.getElementById('register-form').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const email = document.getElementById('email').value;
+        const password = document.getElementById('password').value;
+        const message = document.getElementById('message');
+        const btn = e.target.querySelector('button');
+
+        btn.disabled = true;
+        btn.textContent = '注册中...';
+        message.classList.add('hidden');
+
+        try {
+          const res = await fetch('/api/auth/register', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ email, password })
+          });
+          const data = await res.json();
+
+          if (res.ok) {
+            window.location.href = '/dashboard';
+          } else {
+            message.className = 'mt-4 text-center text-sm text-red-400';
+            message.textContent = data.error || '注册失败';
+          }
+        } catch (err) {
+          message.className = 'mt-4 text-center text-sm text-red-400';
+          message.textContent = '网络错误';
+        } finally {
+          btn.disabled = false;
+          btn.textContent = '注册';
+        }
+      });
+    </script>
   `);
 }
 
@@ -298,81 +396,167 @@ function dashboardPage() {
     <main class="max-w-5xl mx-auto px-4 py-12">
       <div class="mb-8">
         <h1 class="text-2xl font-bold text-[#f5f5dc]">用户后台 🌙</h1>
-        <p class="text-[#a0937d]">管理你的账户和订阅</p>
+        <p id="user-email" class="text-[#a0937d]">加载中...</p>
       </div>
 
-      <div class="grid md:grid-cols-2 gap-6">
-        <!-- Current Plan -->
-        <div class="bg-[#1a1410] border border-[#3d2f1f] rounded-2xl p-6">
-          <h2 class="text-[#f5f5dc] font-bold mb-4">当前套餐</h2>
-          <div class="text-[#a0937d] text-sm mb-4">入门版</div>
-          <div class="text-[#f5f5dc] text-2xl font-bold mb-1">¥9.9 / 月</div>
-          <div class="text-[#7a6f5d] text-xs mb-6">下次扣款日期：2026-05-21</div>
-          <a href="/pricing" class="inline-block text-[#f5f5dc] text-sm hover:underline">升级套餐 →</a>
-        </div>
+      <div id="dashboard-content" class="hidden">
+        <div class="grid md:grid-cols-2 gap-6">
+          <!-- Current Plan -->
+          <div class="bg-[#1a1410] border border-[#3d2f1f] rounded-2xl p-6">
+            <h2 class="text-[#f5f5dc] font-bold mb-4">当前套餐</h2>
+            <div id="plan-name" class="text-[#a0937d] text-sm mb-4">-</div>
+            <div id="plan-price" class="text-[#f5f5dc] text-2xl font-bold mb-1">-</div>
+            <div id="plan-expires" class="text-[#7a6f5d] text-xs mb-6">-</div>
+            <a href="/pricing" class="inline-block text-[#f5f5dc] text-sm hover:underline">升级套餐 →</a>
+          </div>
 
-        <!-- Usage -->
-        <div class="bg-[#1a1410] border border-[#3d2f1f] rounded-2xl p-6">
-          <h2 class="text-[#f5f5dc] font-bold mb-4">今日用量</h2>
-          <div class="space-y-3">
-            <div>
-              <div class="flex justify-between text-[#a0937d] text-sm mb-1">
-                <span>🌕</span>
-                <span>12 / 30</span>
+          <!-- Usage -->
+          <div class="bg-[#1a1410] border border-[#3d2f1f] rounded-2xl p-6">
+            <h2 class="text-[#f5f5dc] font-bold mb-4">今日用量</h2>
+            <div class="space-y-3">
+              <div>
+                <div class="flex justify-between text-[#a0937d] text-sm mb-1">
+                  <span>🌕</span>
+                  <span id="l1-usage">0 / 30</span>
+                </div>
+                <div class="h-2 bg-black rounded-full overflow-hidden">
+                  <div id="l1-bar" class="h-full bg-[#f5f5dc] rounded-full" style="width: 0%"></div>
+                </div>
               </div>
-              <div class="h-2 bg-black rounded-full overflow-hidden">
-                <div class="h-full bg-[#f5f5dc] rounded-full" style="width: 40%"></div>
+              <div>
+                <div class="flex justify-between text-[#a0937d] text-sm mb-1">
+                  <span>🌓</span>
+                  <span id="l2-usage">0 / 200</span>
+                </div>
+                <div class="h-2 bg-black rounded-full overflow-hidden">
+                  <div id="l2-bar" class="h-full bg-[#d4c4a8] rounded-full" style="width: 0%"></div>
+                </div>
               </div>
-            </div>
-            <div>
-              <div class="flex justify-between text-[#a0937d] text-sm mb-1">
-                <span>🌓</span>
-                <span>45 / 200</span>
-              </div>
-              <div class="h-2 bg-black rounded-full overflow-hidden">
-                <div class="h-full bg-[#d4c4a8] rounded-full" style="width: 22%"></div>
-              </div>
-            </div>
-            <div>
-              <div class="flex justify-between text-[#a0937d] text-sm mb-1">
-                <span>🌒</span>
-                <span>不限</span>
+              <div>
+                <div class="flex justify-between text-[#a0937d] text-sm mb-1">
+                  <span>🌒</span>
+                  <span>不限</span>
+                </div>
               </div>
             </div>
           </div>
-        </div>
 
-        <!-- API Key -->
-        <div class="bg-[#1a1410] border border-[#3d2f1f] rounded-2xl p-6">
-          <h2 class="text-[#f5f5dc] font-bold mb-4">API Key</h2>
-          <div class="bg-black border border-[#3d2f1f] rounded-lg p-3 mb-4">
-            <code class="text-[#7a6f5d] text-xs break-all">moon_sk_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx</code>
+          <!-- API Key -->
+          <div class="bg-[#1a1410] border border-[#3d2f1f] rounded-2xl p-6">
+            <h2 class="text-[#f5f5dc] font-bold mb-4">API Key</h2>
+            <div class="bg-black border border-[#3d2f1f] rounded-lg p-3 mb-4">
+              <code id="api-key-display" class="text-[#7a6f5d] text-xs break-all">-</code>
+            </div>
+            <div class="flex gap-3">
+              <button id="copy-key-btn" class="text-[#f5f5dc] text-sm hover:underline">复制</button>
+              <button id="regenerate-key-btn" class="text-[#a0937d] text-sm hover:text-[#f5f5dc]">重新生成</button>
+            </div>
           </div>
-          <button class="text-[#f5f5dc] text-sm hover:underline">重新生成 Key</button>
-        </div>
 
-        <!-- Quick Actions -->
-        <div class="bg-[#1a1410] border border-[#3d2f1f] rounded-2xl p-6">
-          <h2 class="text-[#f5f5dc] font-bold mb-4">快捷操作</h2>
-          <div class="space-y-3">
-            <a href="/pricing" class="flex items-center gap-3 text-[#a0937d] hover:text-[#f5f5dc]">
-              <span>💰</span> 升级套餐
-            </a>
-            <a href="#" class="flex items-center gap-3 text-[#a0937d] hover:text-[#f5f5dc]">
-              <span>📊</span> 使用统计
-            </a>
-            <a href="#" class="flex items-center gap-3 text-[#a0937d] hover:text-[#f5f5dc]">
-              <span>📝</span> API 文档
-            </a>
-            <a href="#" class="flex items-center gap-3 text-[#a0937d] hover:text-[#f5f5dc]">
-              <span>💬</span> 联系我们
-            </a>
+          <!-- Quick Actions -->
+          <div class="bg-[#1a1410] border border-[#3d2f1f] rounded-2xl p-6">
+            <h2 class="text-[#f5f5dc] font-bold mb-4">快捷操作</h2>
+            <div class="space-y-3">
+              <a href="/pricing" class="flex items-center gap-3 text-[#a0937d] hover:text-[#f5f5dc]">
+                <span>💰</span> 升级套餐
+              </a>
+              <a href="#" class="flex items-center gap-3 text-[#a0937d] hover:text-[#f5f5dc]">
+                <span>📊</span> 使用统计
+              </a>
+              <a href="/api/docs" class="flex items-center gap-3 text-[#a0937d] hover:text-[#f5f5dc]">
+                <span>📝</span> API 文档
+              </a>
+              <a href="#" class="flex items-center gap-3 text-[#a0937d] hover:text-[#f5f5dc]">
+                <span>💬</span> 联系我们
+              </a>
+            </div>
           </div>
         </div>
+      </div>
+
+      <div id="login-prompt" class="hidden text-center py-12">
+        <p class="text-[#a0937d] mb-4">请先登录</p>
+        <a href="/login" class="bg-[#f5f5dc] text-black px-6 py-3 rounded-full font-medium hover:bg-[#d4c4a8]">登录</a>
       </div>
     </main>
 
     ${footer()}
+
+    <script>
+      const planNames = {
+        entry: '入门版',
+        basic: '普通版',
+        premium: '高级版'
+      };
+      const planPrices = {
+        entry: '¥9.9 / 月',
+        basic: '¥39 / 月',
+        premium: '¥99 / 月'
+      };
+      const planLimits = {
+        entry: { L1: 30, L2: 200, L3: Infinity },
+        basic: { L1: 200, L2: 1000, L3: Infinity },
+        premium: { L1: 1000, L2: 5000, L3: Infinity }
+      };
+
+      async function loadDashboard() {
+        try {
+          const res = await fetch('/api/dashboard');
+          if (!res.ok) throw new Error('Not logged in');
+
+          const data = await res.json();
+          document.getElementById('user-email').textContent = data.email;
+          document.getElementById('dashboard-content').classList.remove('hidden');
+          document.getElementById('login-prompt').classList.add('hidden');
+
+          // Plan info
+          if (data.subscription) {
+            const plan = data.subscription.plan;
+            document.getElementById('plan-name').textContent = planNames[plan] || plan;
+            document.getElementById('plan-price').textContent = planPrices[plan] || '-';
+            const expires = new Date(data.subscription.expires_at);
+            document.getElementById('plan-expires').textContent = '到期时间：' + expires.toLocaleString('zh-CN');
+          }
+
+          // Usage
+          const limits = planLimits[data.subscription?.plan] || planLimits.entry;
+          const l1Used = data.usage?.L1 || 0;
+          const l2Used = data.usage?.L2 || 0;
+          document.getElementById('l1-usage').textContent = l1Used + ' / ' + limits.L1;
+          document.getElementById('l1-bar').style.width = Math.min(100, (l1Used / limits.L1) * 100) + '%';
+          document.getElementById('l2-usage').textContent = l2Used + ' / ' + limits.L2;
+          document.getElementById('l2-bar').style.width = Math.min(100, (l2Used / limits.L2) * 100) + '%';
+
+          // API Key
+          if (data.apiKeys && data.apiKeys.length > 0) {
+            document.getElementById('api-key-display').textContent = data.apiKeys[0].key;
+          }
+        } catch (err) {
+          document.getElementById('login-prompt').classList.remove('hidden');
+        }
+      }
+
+      document.getElementById('copy-key-btn').addEventListener('click', async () => {
+        const key = document.getElementById('api-key-display').textContent;
+        await navigator.clipboard.writeText(key);
+        const btn = document.getElementById('copy-key-btn');
+        btn.textContent = '已复制!';
+        setTimeout(() => { btn.textContent = '复制'; }, 1500);
+      });
+
+      document.getElementById('regenerate-key-btn').addEventListener('click', async () => {
+        if (!confirm('确定要重新生成 API Key 吗？旧 Key 将失效。')) return;
+        const res = await fetch('/api/auth/regenerate-key', { method: 'POST' });
+        const data = await res.json();
+        if (res.ok) {
+          document.getElementById('api-key-display').textContent = data.apiKey;
+          document.getElementById('copy-key-btn').textContent = '已复制!';
+          setTimeout(() => { document.getElementById('copy-key-btn').textContent = '复制'; }, 1500);
+        }
+      });
+
+      loadDashboard();
+    </script>
   `);
 }
 
@@ -398,6 +582,169 @@ app.get("/api/moon", (c) =>
     tiers: modelTiers,
   }),
 );
+
+app.post("/api/auth/register", async (c) => {
+  try {
+    const { email, password } = await c.req.json();
+
+    if (!email || !password) {
+      return c.json({ error: "邮箱和密码不能为空" }, 400);
+    }
+
+    if (password.length < 6) {
+      return c.json({ error: "密码至少6位" }, 400);
+    }
+
+    const existing = db.query("SELECT id FROM users WHERE email = ?").get(email);
+    if (existing) {
+      return c.json({ error: "邮箱已被注册" }, 409);
+    }
+
+    const userId = crypto.randomUUID();
+    const passwordHash = await hashPassword(password);
+    db.query("INSERT INTO users (id, email, password_hash) VALUES (?, ?, ?)").run(userId, email, passwordHash);
+
+    const { createApiKey } = await import("./auth");
+    const apiKey = createApiKey(userId, "L1");
+
+    // Create 1-hour free trial subscription
+    const subId = crypto.randomUUID();
+    const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(); // 30 days
+    db.query("INSERT INTO subscriptions (id, user_id, plan, status, expires_at) VALUES (?, ?, ?, ?, ?)").run(subId, userId, "entry", "active", expiresAt);
+
+    // Create session
+    const sessionId = crypto.randomUUID();
+    const sessionExpiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+    db.query("INSERT INTO sessions (id, user_id, expires_at) VALUES (?, ?, ?)").run(sessionId, userId, sessionExpiresAt);
+
+    c.header("Set-Cookie", `session=${sessionId}; Path=/; HttpOnly; Max-Age=${30 * 24 * 60 * 60}`);
+
+    return c.json({ success: true, userId, apiKey });
+  } catch (err: unknown) {
+    console.error("Registration error:", err);
+    return c.json({ error: "注册失败" }, 500);
+  }
+});
+
+app.post("/api/auth/login", async (c) => {
+  try {
+    const { email, password } = await c.req.json();
+
+    if (!email || !password) {
+      return c.json({ error: "邮箱和密码不能为空" }, 400);
+    }
+
+    const user = db.query("SELECT id, password_hash FROM users WHERE email = ?").get(email) as { id: string; password_hash: string } | undefined;
+    if (!user) {
+      return c.json({ error: "邮箱或密码错误" }, 401);
+    }
+
+    const valid = await verifyPassword(password, user.password_hash);
+    if (!valid) {
+      return c.json({ error: "邮箱或密码错误" }, 401);
+    }
+
+    // Create session
+    const sessionId = crypto.randomUUID();
+    const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+    db.query("INSERT INTO sessions (id, user_id, expires_at) VALUES (?, ?, ?)").run(sessionId, user.id, expiresAt);
+
+    c.header("Set-Cookie", `session=${sessionId}; Path=/; HttpOnly; Max-Age=${30 * 24 * 60 * 60}`);
+
+    return c.json({ success: true, userId: user.id });
+  } catch (err: unknown) {
+    console.error("Login error:", err);
+    return c.json({ error: "登录失败" }, 500);
+  }
+});
+
+app.post("/api/auth/logout", (c) => {
+  const cookieHeader = c.req.header("cookie") || "";
+  const match = cookieHeader.match(/session=([^;]+)/);
+  if (match) {
+    db.query("DELETE FROM sessions WHERE id = ?").run(match[1]);
+  }
+  c.header("Set-Cookie", "session=; Path=/; HttpOnly; Max-Age=0");
+  return c.json({ success: true });
+});
+
+function getUserFromSession(c: any): { userId: string; email: string } | null {
+  const cookieHeader = c.req.header("cookie") || "";
+  const match = cookieHeader.match(/session=([^;]+)/);
+  if (!match) return null;
+  const sessionId = match[1];
+
+  const session = db.query(`
+    SELECT s.user_id, u.email FROM sessions s
+    JOIN users u ON u.id = s.user_id
+    WHERE s.id = ? AND s.expires_at > datetime('now')
+  `).get(sessionId) as { user_id: string; email: string } | undefined;
+
+  if (!session) return null;
+  return { userId: session.user_id, email: session.email };
+}
+
+app.get("/api/dashboard", (c) => {
+  const user = getUserFromSession(c);
+  if (!user) {
+    return c.json({ error: "未登录" }, 401);
+  }
+
+  // Get subscription
+  const subscription = db.query(`
+    SELECT plan, status, expires_at FROM subscriptions
+    WHERE user_id = ? AND status = 'active'
+    ORDER BY created_at DESC LIMIT 1
+  `).get(user.userId) as { plan: string; status: string; expires_at: string } | undefined;
+
+  // Get API keys
+  const apiKeys = db.query(`
+    SELECT key, tier, created_at FROM api_keys WHERE user_id = ?
+  `).all(user.userId) as { key: string; tier: string; created_at: string }[];
+
+  // Get usage today
+  const today = new Date().toISOString().split("T")[0];
+  const usage = db.query(`
+    SELECT tier, COUNT(*) as count FROM usage_events
+    WHERE user_id = ? AND date(created_at) = ?
+    GROUP BY tier
+  `).all(user.userId, today) as { tier: string; count: number }[];
+
+  const usageMap: Record<string, number> = { L1: 0, L2: 0, L3: 0 };
+  usage.forEach((u) => { usageMap[u.tier] = u.count; });
+
+  return c.json({
+    email: user.email,
+    subscription,
+    apiKeys,
+    usage: usageMap,
+  });
+});
+
+app.post("/api/auth/regenerate-key", async (c) => {
+  const user = getUserFromSession(c);
+  if (!user) {
+    return c.json({ error: "未登录" }, 401);
+  }
+
+  const { createApiKey } = await import("./auth");
+  const newKey = createApiKey(user.userId, "L1");
+
+  return c.json({ apiKey: newKey });
+});
+
+// Simple password hashing using Web Crypto
+async function hashPassword(password: string): Promise<string> {
+  const encoder = new TextEncoder();
+  const data = encoder.encode(password);
+  const hash = await crypto.subtle.digest("SHA-256", data);
+  return Buffer.from(hash).toString("hex");
+}
+
+async function verifyPassword(password: string, hash: string): Promise<boolean> {
+  const passwordHash = await hashPassword(password);
+  return passwordHash === hash;
+}
 
 app.get("/api/stats", (c) => {
   const userCount = db.query("SELECT COUNT(*) AS count FROM users").get() as { count: number };

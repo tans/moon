@@ -12,6 +12,7 @@ db.exec(`
   CREATE TABLE IF NOT EXISTS users (
     id TEXT PRIMARY KEY,
     email TEXT NOT NULL UNIQUE,
+    password_hash TEXT NOT NULL,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
   );
 
@@ -51,6 +52,30 @@ db.exec(`
     user_id TEXT NOT NULL,
     key TEXT NOT NULL UNIQUE,
     tier TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (user_id) REFERENCES users(id)
+  );
+`);
+
+// Migrate existing users table to add password_hash column
+try {
+  db.exec("ALTER TABLE users ADD COLUMN password_hash TEXT");
+} catch (e: any) {
+  // Column may already exist, ignore error
+}
+
+// Migrate existing subscriptions table to add expires_at column
+try {
+  db.exec("ALTER TABLE subscriptions ADD COLUMN expires_at TEXT");
+} catch (e: any) {
+  // Column may already exist, ignore error
+}
+
+db.exec(`
+  CREATE TABLE IF NOT EXISTS sessions (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    expires_at TEXT NOT NULL,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (user_id) REFERENCES users(id)
   );
