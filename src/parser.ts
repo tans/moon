@@ -35,12 +35,20 @@ export function parseOpenAIRequest(body: unknown): OpenAIRequest {
   if (!body || typeof body !== "object") {
     throw new Error("Invalid request body");
   }
+  const req = body as Record<string, unknown>;
+  if (typeof req.model !== "string" || !Array.isArray(req.messages)) {
+    throw new Error("Invalid OpenAI request: model and messages are required");
+  }
   return body as OpenAIRequest;
 }
 
 export function parseAnthropicRequest(body: unknown): AnthropicRequest {
   if (!body || typeof body !== "object") {
     throw new Error("Invalid request body");
+  }
+  const req = body as Record<string, unknown>;
+  if (typeof req.model !== "string" || !Array.isArray(req.messages)) {
+    throw new Error("Invalid Anthropic request: model and messages are required");
   }
   return body as AnthropicRequest;
 }
@@ -61,7 +69,7 @@ export function parseRequest(
 
   return {
     tier,
-    model: typeof req.model === "string" ? req.model : tier,
+    model: typeof req.model === "string" ? req.model : "auto",
     messages,
     stream,
     rawRequest: req,
