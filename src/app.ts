@@ -408,58 +408,42 @@ app.get("/api/stats", (c) => {
   });
 });
 
-// OpenAI 兼容路由
-app.post("/v1/chat/completions", async (c) => {
+// Shared handler for AI requests
+async function handleAIRequest(c: Context) {
   const auth = authenticate(c.req.header("Authorization"));
   if (!auth) {
     return c.json({ error: { message: "Invalid API key" } }, 401);
   }
 
-  const body = await c.req.json();
-  const parsed = parseRequest(body, auth.tier);
+  try {
+    const body = await c.req.json();
+    const parsed = parseRequest(body, auth.tier);
 
-  const source = config[parsed.tier.toLowerCase() as "l1" | "l2" | "l3"];
-  if (!source) {
-    return c.json({ error: { message: `Tier ${parsed.tier} not configured` } }, 500);
-  }
+    const source = config[parsed.tier.toLowerCase() as "l1" | "l2" | "l3"];
+    if (!source) {
+      return c.json({ error: { message: `Tier ${parsed.tier} not configured` } }, 500);
+    }
 
-  const converted = convertRequest(body, source.provider, source.model);
-  const result = await callModel(source, converted.body);
+    const converted = convertRequest(body, source.provider, source.model);
+    const result = await callModel(source, converted.body);
 
-  recordUsage(auth.userId, parsed.tier, source.model);
+    recordUsage(auth.userId, parsed.tier, source.model);
 
-  if (!result.ok) {
+    if (!result.ok) {
+      return c.json(result.data, result.status);
+    }
+
     return c.json(result.data, result.status);
+  } catch (err) {
+    console.error("Request handling error:", err);
+    return c.json({ error: { message: "Internal server error" } }, 500);
   }
+}
 
-  return c.json(result.data, result.status);
-});
+// OpenAI 兼容路由
+app.post("/v1/chat/completions", handleAIRequest);
 
 // Anthropic 兼容路由
-app.post("/v1/messages", async (c) => {
-  const auth = authenticate(c.req.header("Authorization"));
-  if (!auth) {
-    return c.json({ error: { message: "Invalid API key" } }, 401);
-  }
-
-  const body = await c.req.json();
-  const parsed = parseRequest(body, auth.tier);
-
-  const source = config[parsed.tier.toLowerCase() as "l1" | "l2" | "l3"];
-  if (!source) {
-    return c.json({ error: { message: `Tier ${parsed.tier} not configured` } }, 500);
-  }
-
-  const converted = convertRequest(body, source.provider, source.model);
-  const result = await callModel(source, converted.body);
-
-  recordUsage(auth.userId, parsed.tier, source.model);
-
-  if (!result.ok) {
-    return c.json(result.data, result.status);
-  }
-
-  return c.json(result.data, result.status);
-});
+app.post("/v1/messages", handleAIRequest);
 
 export default app;
