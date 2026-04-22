@@ -6,9 +6,9 @@ export interface ModelSource {
 }
 
 export interface Config {
-  l1: ModelSource | null;
-  l2: ModelSource | null;
-  l3: ModelSource | null;
+  l1?: ModelSource;
+  l2?: ModelSource;
+  l3?: ModelSource;
 }
 
 function getSource(tier: "L1" | "L2" | "L3"): ModelSource | null {
