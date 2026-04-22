@@ -3,7 +3,7 @@ import { db } from "./db";
 import { authenticate } from "./auth";
 import { parseRequest } from "./parser";
 import { convertRequest } from "./convert";
-import { callModel } from "./proxy";
+import { callModel, callModelStream } from "./proxy";
 import { recordUsage } from "./usage";
 import { config } from "./config";
 
@@ -422,6 +422,17 @@ async function handleAIRequest(c: any) {
     const source = config[parsed.tier.toLowerCase() as "l1" | "l2" | "l3"];
     if (!source) {
       return c.json({ error: { message: `Tier ${parsed.tier} not configured` } }, 500);
+    }
+
+    // 流式响应
+    if (parsed.stream) {
+      const streamResponse = await callModelStream(source, body);
+      recordUsage(auth.userId, parsed.tier, source.model);
+      return new Response(streamResponse.body, {
+        headers: {
+          "Content-Type": "text/event-stream",
+        },
+      });
     }
 
     const converted = convertRequest(body, source.provider, source.model);
