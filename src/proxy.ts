@@ -20,9 +20,15 @@ export async function callModel(
       "Authorization": `Bearer ${source.apiKey}`,
     },
     body: JSON.stringify(body),
+    signal: AbortSignal.timeout(30000), // 添加超时
   });
 
-  const data = await response.json();
+  let data: unknown;
+  try {
+    data = await response.json();
+  } catch {
+    data = await response.text();
+  }
 
   const headers: Record<string, string> = {};
   response.headers.forEach((value, key) => {
