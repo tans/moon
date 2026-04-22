@@ -409,7 +409,7 @@ app.get("/api/stats", (c) => {
 });
 
 // Shared handler for AI requests
-async function handleAIRequest(c: Context) {
+async function handleAIRequest(c: any) {
   const auth = authenticate(c.req.header("Authorization"));
   if (!auth) {
     return c.json({ error: { message: "Invalid API key" } }, 401);
@@ -434,7 +434,7 @@ async function handleAIRequest(c: Context) {
     }
 
     return c.json(result.data, result.status);
-  } catch (err) {
+  } catch (err: unknown) {
     console.error("Request handling error:", err);
     return c.json({ error: { message: "Internal server error" } }, 500);
   }
