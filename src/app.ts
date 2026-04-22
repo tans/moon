@@ -1,5 +1,11 @@
 import { Hono } from "hono";
 import { db } from "./db";
+import { authenticate } from "./auth";
+import { parseRequest } from "./parser";
+import { convertRequest } from "./convert";
+import { callModel } from "./proxy";
+import { recordUsage } from "./usage";
+import { config } from "./config";
 
 const plans = [
   {
@@ -27,20 +33,20 @@ const plans = [
 
 const modelTiers = [
   {
-    tier: "满月",
+    tier: "L1",
     tierEmoji: "🌕",
     models: ["GPT", "Gemini", "Claude"],
     rule: "优先路由，额度按日计算",
   },
   {
-    tier: "半月",
+    tier: "L2",
     tierEmoji: "🌓",
     models: ["Kimi", "MiniMax", "Qwen"],
-    rule: "满月耗尽后降级",
+    rule: "L1 额度耗尽后降级",
   },
   {
-    tier: "新月",
-    tierEmoji: "🌑",
+    tier: "L3",
+    tierEmoji: "🌒",
     models: ["轻量模型", "快速模型", "低成本模型"],
     rule: "始终可用",
   },
@@ -62,114 +68,8 @@ function baseHtml(content: string) {
       body { margin: 0; font-family: ui-sans-serif, system-ui, -apple-system, sans-serif; }
     </style>
   </head>
-<<<<<<< HEAD
   <body class="bg-black text-[#f5f5dc] min-h-screen">
     ${content}
-=======
-  <body>
-    <div class="wrap">
-      <header class="nav">
-        <div class="brand">
-          <div class="logo" aria-hidden="true"></div>
-          <div>
-            <div style="font-size: 18px;">MOON</div>
-            <div style="font-size: 12px; color: var(--muted); font-weight: 500;">Model Always Online</div>
-          </div>
-        </div>
-        <div class="actions" style="margin-top: 0;">
-          <a class="button" href="/login">登录</a>
-          <a class="button primary" href="/register">注册</a>
-        </div>
-      </header>
-
-      <section class="hero">
-        <div>
-          <div class="chip pill">从满月到新月，始终在线</div>
-          <h1>大模型一直在线</h1>
-          <p class="lead">
-            MOON 统一聚合多模型，自动按“满月 / 半月 / 新月”路由。
-            高层额度用完后自动降级，保证服务不断线。
-          </p>
-          <div class="actions">
-            <a class="button primary" href="/register">立即注册</a>
-            <a class="button" href="#plans">查看套餐</a>
-          </div>
-        </div>
-        <div class="orb card">
-          <div class="row">
-            <div>
-              <div class="kicker">当前状态</div>
-              <div class="title">满月优先路由</div>
-            </div>
-            <div class="moon" aria-hidden="true"></div>
-          </div>
-          <div class="grid" style="margin-top: 18px;">
-            <div class="card" style="padding: 16px;">
-              <div class="kicker">满月</div>
-              <div class="title" style="font-size: 18px;">复杂任务</div>
-              <div class="muted" style="font-size: 14px;">编程、推理、长文本</div>
-            </div>
-            <div class="card" style="padding: 16px;">
-              <div class="kicker">半月</div>
-              <div class="title" style="font-size: 18px;">日常任务</div>
-              <div class="muted" style="font-size: 14px;">总结、改写、翻译</div>
-            </div>
-            <div class="card" style="padding: 16px;">
-              <div class="kicker">新月</div>
-              <div class="title" style="font-size: 18px;">始终在线</div>
-              <div class="muted" style="font-size: 14px;">聊天、续写、润色</div>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      <section class="section" id="tiers">
-        <div class="sectionHead">
-          <div class="kicker">模型层级</div>
-          <h2>三层月相路由</h2>
-          <p class="muted">从高优先级模型到基础模型，自动切换，用户无需理解复杂计费和接口。</p>
-        </div>
-        <div class="grid">
-          ${modelTiers
-            .map(
-              (tier) => `
-              <article class="card">
-                <div class="kicker">${tier.tier}</div>
-                <div class="title">${tier.models.join(" / ")}</div>
-                <p class="muted">${tier.rule}</p>
-              </article>
-            `,
-            )
-            .join("")}
-        </div>
-      </section>
-
-      <section class="section" id="plans">
-        <div class="sectionHead">
-          <div class="kicker">套餐</div>
-          <h2>三档订阅</h2>
-          <p class="muted">按使用量和优先级选择，后续可直接接入订阅与支付。</p>
-        </div>
-        <div class="planGrid">
-          ${plans
-            .map(
-              (plan, index) => `
-              <article class="plan ${index === 1 ? "featured" : ""}">
-                <div class="kicker">${plan.name}</div>
-                <div class="price">${plan.price}</div>
-                <ul class="list">
-                  <li>满月：${plan.fullMoon}</li>
-                  <li>半月：${plan.halfMoon}</li>
-                  <li>新月：${plan.newMoon}</li>
-                </ul>
-              </article>
-            `,
-            )
-            .join("")}
-        </div>
-      </section>
-    </div>
->>>>>>> origin/agent/claude-for-moon/2bd0d598
   </body>
 </html>`;
 }
@@ -199,7 +99,7 @@ function footer() {
     <div class="max-w-5xl mx-auto text-center text-[#a0937d] text-sm">
       <p class="text-2xl mb-2">🌙</p>
       <p>MOON — Model Always Online</p>
-      <p class="mt-1">从满月到新月，始终在线</p>
+      <p class="mt-1">从 🌕 到 🌒，始终在线</p>
     </div>
   </footer>`;
 }
@@ -215,9 +115,9 @@ function moonPage() {
         <h1 class="text-4xl md:text-5xl font-bold text-[#f5f5dc] mb-4 tracking-tight">
           大模型一直在线
         </h1>
-        <p class="text-[#a0937d] text-lg mb-2">🌕 满月 / 🌓 半月 / 🌑 新月</p>
+        <p class="text-[#a0937d] text-lg mb-2">🌕 / 🌓 / 🌒</p>
         <p class="text-[#7a6f5d] max-w-xl mx-auto mb-8">
-          优先使用满月模型，其次半月模型，新月不限。自动路由，始终在线。
+          优先使用 🌕，其次 🌓，🌒 不限。自动路由，始终在线。
         </p>
         <div class="flex gap-4 justify-center">
           <a href="/register" class="bg-[#f5f5dc] text-black px-6 py-3 rounded-full font-medium hover:bg-[#d4c4a8]">立即开始</a>
@@ -245,16 +145,16 @@ function moonPage() {
         <h2 class="text-center text-[#f5f5dc] text-2xl font-bold mb-8">工作原理 ⚡</h2>
         <div class="grid md:grid-cols-2 gap-6">
           <div class="bg-[#1a1410] border border-[#3d2f1f] rounded-2xl p-6">
-            <div class="text-2xl mb-3">🌕 满月优先</div>
+            <div class="text-2xl mb-3">🌕 优先</div>
             <p class="text-[#a0937d] text-sm">复杂任务、编程、长文写作使用 GPT、Gemini、Claude 等顶级模型。</p>
           </div>
           <div class="bg-[#1a1410] border border-[#3d2f1f] rounded-2xl p-6">
-            <div class="text-2xl mb-3">🌓 半月降级</div>
+            <div class="text-2xl mb-3">🌓 降级</div>
             <p class="text-[#a0937d] text-sm">日常任务、总结、改写、翻译使用 Kimi、MiniMax、Qwen 等高效模型。</p>
           </div>
           <div class="bg-[#1a1410] border border-[#3d2f1f] rounded-2xl p-6 md:col-span-2">
-            <div class="text-2xl mb-3">🌑 新月兜底</div>
-            <p class="text-[#a0937d] text-sm">聊天、续写、润色等基础任务使用轻量快速模型，新月时段不限量使用。</p>
+            <div class="text-2xl mb-3">🌒 兜底</div>
+            <p class="text-[#a0937d] text-sm">聊天、续写、润色等基础任务使用轻量快速模型，不限量使用。</p>
           </div>
         </div>
       </section>
@@ -271,7 +171,7 @@ function moonPage() {
               <ul class="text-[#a0937d] text-xs space-y-1 mt-4">
                 <li>🌕 ${plan.fullMoon}</li>
                 <li>🌓 ${plan.halfMoon}</li>
-                <li>🌑 ${plan.newMoon}</li>
+                <li>🌒 ${plan.newMoon}</li>
               </ul>
             </div>
           `).join('')}
@@ -303,9 +203,9 @@ function pricingPage() {
             <div class="text-[#f5f5dc] text-4xl font-bold mb-1">${plan.price}</div>
             <div class="text-[#a0937d] text-sm mb-6">每月</div>
             <ul class="text-left text-[#a0937d] text-sm space-y-3 mb-8">
-              <li class="flex items-center gap-2"><span>🌕</span> 满月 ${plan.fullMoon}</li>
-              <li class="flex items-center gap-2"><span>🌓</span> 半月 ${plan.halfMoon}</li>
-              <li class="flex items-center gap-2"><span>🌑</span> 新月 ${plan.newMoon}</li>
+              <li class="flex items-center gap-2"><span>🌕</span> ${plan.fullMoon}</li>
+              <li class="flex items-center gap-2"><span>🌓</span> ${plan.halfMoon}</li>
+              <li class="flex items-center gap-2"><span>🌒</span> ${plan.newMoon}</li>
               <li class="flex items-center gap-2"><span>✓</span> 自动路由切换</li>
               ${i === 2 ? '<li class="flex items-center gap-2"><span>✓</span> 长上下文</li><li class="flex items-center gap-2"><span>✓</span> 高优先级</li>' : ''}
             </ul>
@@ -324,7 +224,6 @@ function pricingPage() {
 }
 
 function loginPage() {
-<<<<<<< HEAD
   return baseHtml(`
     ${navbar()}
 
@@ -418,7 +317,7 @@ function dashboardPage() {
           <div class="space-y-3">
             <div>
               <div class="flex justify-between text-[#a0937d] text-sm mb-1">
-                <span>🌕 满月</span>
+                <span>🌕</span>
                 <span>12 / 30</span>
               </div>
               <div class="h-2 bg-black rounded-full overflow-hidden">
@@ -427,7 +326,7 @@ function dashboardPage() {
             </div>
             <div>
               <div class="flex justify-between text-[#a0937d] text-sm mb-1">
-                <span>🌓 半月</span>
+                <span>🌓</span>
                 <span>45 / 200</span>
               </div>
               <div class="h-2 bg-black rounded-full overflow-hidden">
@@ -436,68 +335,12 @@ function dashboardPage() {
             </div>
             <div>
               <div class="flex justify-between text-[#a0937d] text-sm mb-1">
-                <span>🌑 新月</span>
+                <span>🌒</span>
                 <span>不限</span>
               </div>
-=======
-  return `<!doctype html>
-<html lang="zh-CN">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="description" content="MOON 登录入口。Model Always Online." />
-    <title>MOON | 登录</title>
-    <style>
-      :root {
-        --bg: #fffaf5; --panel: rgba(255,255,255,.88); --text: #2b2333;
-        --muted: #7f6f7d; --primary: #f08787; --line: #f0ddd3;
-        --shadow: 0 20px 60px rgba(70,40,50,.12);
-      }
-      * { box-sizing: border-box; }
-      body {
-        margin: 0;
-        font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-        color: var(--text);
-        background: radial-gradient(circle at top left, rgba(240,135,135,.16), transparent 30%),
-          radial-gradient(circle at top right, rgba(255,199,167,.26), transparent 28%),
-          linear-gradient(180deg, #fffdf9 0%, var(--bg) 100%);
-      }
-      a { color: inherit; text-decoration: none; }
-      .wrap { max-width: 960px; margin: 0 auto; padding: 24px; min-height: 100vh; display: grid; align-items: center; }
-      .panel { border: 1px solid var(--line); background: var(--panel); box-shadow: var(--shadow); backdrop-filter: blur(16px); border-radius: 32px; padding: 28px; }
-      .row { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
-      .brand { display: flex; align-items: center; gap: 14px; font-weight: 700; }
-      .logo { width: 46px; height: 46px; border-radius: 999px; background: radial-gradient(circle at 30% 30%, #fff7eb, #f8d9cb 55%, #f08787 100%); box-shadow: inset 0 1px 2px rgba(255,255,255,.5); position: relative; }
-      .logo::after { content: ""; position: absolute; inset: 11px 0 11px 18px; border-radius: 999px; background: rgba(255,255,255,.96); }
-      .button { display: inline-flex; align-items: center; justify-content: center; padding: 12px 18px; border-radius: 999px; font-weight: 600; border: 1px solid var(--line); background: #fff; }
-      .button.primary { background: var(--primary); color: #fff; border-color: transparent; }
-      .grid { display: grid; gap: 18px; margin-top: 28px; grid-template-columns: repeat(2, minmax(0, 1fr)); }
-      .card { border: 1px solid var(--line); border-radius: 28px; padding: 24px; background: rgba(255,255,255,.78); }
-      .kicker { color: #b66f61; font-size: 14px; letter-spacing: .08em; text-transform: uppercase; }
-      .title { margin: 10px 0 8px; font-size: 28px; letter-spacing: -.04em; }
-      .muted { color: var(--muted); line-height: 1.7; }
-      .field { display: grid; gap: 8px; margin-top: 16px; }
-      .field input { width: 100%; border-radius: 16px; border: 1px solid var(--line); padding: 14px 16px; font-size: 15px; outline: none; background: #fff; }
-      .field input:focus { border-color: #f08787; box-shadow: 0 0 0 3px rgba(240,135,135,.12); }
-      .actions { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 18px; }
-      .note { margin-top: 18px; font-size: 13px; color: var(--muted); }
-      @media (max-width: 860px) { .grid { grid-template-columns: 1fr; } .title { font-size: 24px; } }
-    </style>
-  </head>
-  <body>
-    <div class="wrap">
-      <section class="panel">
-        <div class="row">
-          <div class="brand">
-            <div class="logo" aria-hidden="true"></div>
-            <div>
-              <div style="font-size:18px;">MOON</div>
-              <div style="font-size:12px;color:var(--muted);font-weight:500;">Model Always Online</div>
->>>>>>> origin/agent/claude-for-moon/2bd0d598
             </div>
           </div>
         </div>
-<<<<<<< HEAD
 
         <!-- API Key -->
         <div class="bg-[#1a1410] border border-[#3d2f1f] rounded-2xl p-6">
@@ -531,108 +374,8 @@ function dashboardPage() {
 
     ${footer()}
   `);
-=======
-        <div style="margin-top:26px;max-width:700px;">
-          <div class="kicker">Access Portal</div>
-          <h1 class="title">登录或注册，继续使用 MOON</h1>
-        </div>
-        <div class="grid">
-          <article class="card">
-            <div class="kicker">登录</div>
-            <h2 class="title" style="font-size:24px;">已有账号</h2>
-            <p class="muted">输入邮箱和密码进入系统。</p>
-            <div class="field"><label><div class="kicker">邮箱</div><input type="email" placeholder="name@example.com" /></label></div>
-            <div class="field"><label><div class="kicker">密码</div><input type="password" placeholder="输入密码" /></label></div>
-            <div class="actions"><button class="button primary">登录</button></div>
-          </article>
-          <article class="card">
-            <div class="kicker">注册</div>
-            <h2 class="title" style="font-size:24px;">新用户</h2>
-            <p class="muted">创建账号后可订阅套餐。</p>
-            <div class="actions"><a class="button primary" href="/register">去注册页</a></div>
-          </article>
-        </div>
-        <p class="note">只是想看产品？<a href="/" style="color:var(--primary);">返回首页</a></p>
-      </section>
-    </div>
-  </body>
-</html>`;
->>>>>>> origin/agent/claude-for-moon/2bd0d598
 }
 
-function registerPage() {
-  return `<!doctype html>
-<html lang="zh-CN">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="description" content="MOON 注册入口。Model Always Online." />
-    <title>MOON | 注册</title>
-    <style>
-      :root {
-        --bg: #fffaf5; --panel: rgba(255,255,255,.88); --text: #2b2333;
-        --muted: #7f6f7d; --primary: #f08787; --line: #f0ddd3;
-        --shadow: 0 20px 60px rgba(70,40,50,.12);
-      }
-      * { box-sizing: border-box; }
-      body {
-        margin: 0;
-        font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-        color: var(--text);
-        background: radial-gradient(circle at top left, rgba(240,135,135,.16), transparent 30%),
-          radial-gradient(circle at top right, rgba(255,199,167,.26), transparent 28%),
-          linear-gradient(180deg, #fffdf9 0%, var(--bg) 100%);
-      }
-      a { color: inherit; text-decoration: none; }
-      .wrap { max-width: 960px; margin: 0 auto; padding: 24px; min-height: 100vh; display: grid; align-items: center; }
-      .panel { border: 1px solid var(--line); background: var(--panel); box-shadow: var(--shadow); backdrop-filter: blur(16px); border-radius: 32px; padding: 28px; }
-      .row { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
-      .brand { display: flex; align-items: center; gap: 14px; font-weight: 700; }
-      .logo { width: 46px; height: 46px; border-radius: 999px; background: radial-gradient(circle at 30% 30%, #fff7eb, #f8d9cb 55%, #f08787 100%); box-shadow: inset 0 1px 2px rgba(255,255,255,.5); position: relative; }
-      .logo::after { content: ""; position: absolute; inset: 11px 0 11px 18px; border-radius: 999px; background: rgba(255,255,255,.96); }
-      .button { display: inline-flex; align-items: center; justify-content: center; padding: 12px 18px; border-radius: 999px; font-weight: 600; border: 1px solid var(--line); background: #fff; cursor: pointer; font-size: 15px; }
-      .button.primary { background: var(--primary); color: #fff; border-color: transparent; }
-      .card { border: 1px solid var(--line); border-radius: 28px; padding: 24px; background: rgba(255,255,255,.78); max-width: 480px; margin-top: 28px; }
-      .kicker { color: #b66f61; font-size: 14px; letter-spacing: .08em; text-transform: uppercase; }
-      .title { margin: 10px 0 8px; font-size: 28px; letter-spacing: -.04em; }
-      .muted { color: var(--muted); line-height: 1.7; }
-      .field { display: grid; gap: 8px; margin-top: 16px; }
-      .field input { width: 100%; border-radius: 16px; border: 1px solid var(--line); padding: 14px 16px; font-size: 15px; outline: none; background: #fff; }
-      .field input:focus { border-color: #f08787; box-shadow: 0 0 0 3px rgba(240,135,135,.12); }
-      .actions { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 18px; }
-      .note { margin-top: 18px; font-size: 13px; color: var(--muted); }
-    </style>
-  </head>
-  <body>
-    <div class="wrap">
-      <section class="panel">
-        <div class="row">
-          <div class="brand">
-            <div class="logo" aria-hidden="true"></div>
-            <div>
-              <div style="font-size:18px;">MOON</div>
-              <div style="font-size:12px;color:var(--muted);font-weight:500;">Model Always Online</div>
-            </div>
-          </div>
-          <a class="button" href="/">返回首页</a>
-        </div>
-        <div style="margin-top:26px;">
-          <div class="kicker">新用户注册</div>
-          <h1 class="title">创建账号，开始使用 MOON</h1>
-          <p class="muted">创建账号后可订阅套餐并生成 API Key。</p>
-        </div>
-        <article class="card">
-          <div class="field"><label><div class="kicker">用户名</div><input type="text" placeholder="输入用户名" /></label></div>
-          <div class="field"><label><div class="kicker">邮箱</div><input type="email" placeholder="name@example.com" /></label></div>
-          <div class="field"><label><div class="kicker">密码</div><input type="password" placeholder="设置密码" /></label></div>
-          <div class="actions"><button class="button primary">注册</button></div>
-        </article>
-        <p class="note">已有账号？<a href="/login" style="color:var(--primary);">直接登录</a></p>
-      </section>
-    </div>
-  </body>
-</html>`;
-}
 app.get("/", (c) => c.html(moonPage()));
 app.get("/pricing", (c) => c.html(pricingPage()));
 app.get("/login", (c) => c.html(loginPage()));
@@ -651,7 +394,7 @@ app.get("/api/plans", (c) => c.json(plans));
 
 app.get("/api/moon", (c) =>
   c.json({
-    routing: ["满月", "半月", "新月"],
+    routing: ["L1", "L2", "L3"],
     tiers: modelTiers,
   }),
 );
@@ -663,6 +406,60 @@ app.get("/api/stats", (c) => {
     users: userCount.count,
     subscriptions: subscriptionCount.count,
   });
+});
+
+// OpenAI 兼容路由
+app.post("/v1/chat/completions", async (c) => {
+  const auth = authenticate(c.req.header("Authorization"));
+  if (!auth) {
+    return c.json({ error: { message: "Invalid API key" } }, 401);
+  }
+
+  const body = await c.req.json();
+  const parsed = parseRequest(body, auth.tier);
+
+  const source = config[parsed.tier.toLowerCase() as "l1" | "l2" | "l3"];
+  if (!source) {
+    return c.json({ error: { message: `Tier ${parsed.tier} not configured` } }, 500);
+  }
+
+  const converted = convertRequest(body, source.provider, source.model);
+  const result = await callModel(source, converted.body);
+
+  recordUsage(auth.userId, parsed.tier, source.model);
+
+  if (!result.ok) {
+    return c.json(result.data, result.status);
+  }
+
+  return c.json(result.data, result.status);
+});
+
+// Anthropic 兼容路由
+app.post("/v1/messages", async (c) => {
+  const auth = authenticate(c.req.header("Authorization"));
+  if (!auth) {
+    return c.json({ error: { message: "Invalid API key" } }, 401);
+  }
+
+  const body = await c.req.json();
+  const parsed = parseRequest(body, auth.tier);
+
+  const source = config[parsed.tier.toLowerCase() as "l1" | "l2" | "l3"];
+  if (!source) {
+    return c.json({ error: { message: `Tier ${parsed.tier} not configured` } }, 500);
+  }
+
+  const converted = convertRequest(body, source.provider, source.model);
+  const result = await callModel(source, converted.body);
+
+  recordUsage(auth.userId, parsed.tier, source.model);
+
+  if (!result.ok) {
+    return c.json(result.data, result.status);
+  }
+
+  return c.json(result.data, result.status);
 });
 
 export default app;
