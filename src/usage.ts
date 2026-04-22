@@ -20,7 +20,12 @@ export function recordUsage(
 }
 
 export function getTodayUsage(userId: string, tier: "L1" | "L2" | "L3"): number {
-  const today = new Date().toISOString().split("T")[0];
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, '0');
+  const day = String(now.getDate()).padStart(2, '0');
+  const today = `${year}-${month}-${day}`;
+
   const row = db.query(
     "SELECT COUNT(*) as count FROM usage_events WHERE user_id = ? AND tier = ? AND date(created_at) = ?"
   ).get(userId, tier, today) as { count: number };
