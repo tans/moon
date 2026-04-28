@@ -96,7 +96,7 @@ export function getTodayUsageByTier(userId: string): Record<string, { count: num
 export const TIER_WEIGHTS: Record<string, number> = {
   '🌕': 1.0,
   '🌓': 0.5,
-  '🌑': 0.25,
+  '🌒': 0.25,
 };
 
 // Get usage limits for a user based on their plan
@@ -130,7 +130,7 @@ function getUsageByDateRange(userId: string, startDate: string, endDate: string)
   return {
     fullMoon: usageMap['🌕'] ?? 0,
     halfMoon: usageMap['🌓'] ?? 0,
-    newMoon: usageMap['🌑'] ?? 0,
+    newMoon: usageMap['🌒'] ?? 0,
   };
 }
 
@@ -214,7 +214,7 @@ export function getUserUsageLimits(userId: string): UsageLimits {
 }
 
 // Check if user has quota for a tier
-export function hasQuota(userId: string, tier: '🌕' | '🌓' | '🌑'): boolean {
+export function hasQuota(userId: string, tier: '🌕' | '🌓' | '🌒'): boolean {
   const limits = getUserUsageLimits(userId);
   const tierLimits = limits[tier === '🌕' ? 'fullMoon' : tier === '🌓' ? 'halfMoon' : 'newMoon'];
   return tierLimits.used < tierLimits.limit;

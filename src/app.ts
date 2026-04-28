@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import { readFileSync } from "node:fs";
+import type { SQLQueryBindings } from "bun:sqlite";
 import { db } from "./db";
 import bcrypt from "bcryptjs";
 import { routeAIRequest, getConfiguredProviders, getModelsForTier, type AIRequest } from "./ai/router";
@@ -230,11 +231,18 @@ const modelTiers = [
     rule: "额度耗尽后降级",
   },
   {
-    tier: "🌑",
+    tier: "🌒",
     models: ["轻量模型", "快速模型", "低成本模型"],
     rule: "始终可用",
   },
 ] as const;
+
+const logoPath =
+  "M926.72 516.8c-3.04-99.52-13.92-179.04-129.92-292S624 106.88 544 112c-222.56 16-280.48 69.44-350.56 150.56S96 434.88 97.12 488.8 125.12 679.84 197.76 768s140.96 128 292.48 144 269.44-67.52 334.56-131.04a362.4 362.4 0 0 0 101.92-264.16zM864 368c2.88 0 12.48 28.48 20 58.56a106.56 106.56 0 0 1 4 44.96 90.56 90.56 0 0 1-30.56-45.44c-7.2-28.32 2.72-58.08 6.56-58.08z m8 292.48c-27.36 54.88-104 152.32-172.8 178.4S509.12 919.84 384 861.76 221.76 748.8 176 656 126.24 469.76 148.64 402.4s94.56-156 153.12-196 136.48-53.44 187.52-58.56c67.04-6.56 132.48-8.48 190.08 20.96s143.04 128 156.96 144.96a124.8 124.8 0 0 1 20.48 35.04s-28.16 19.2-17.6 68 28.96 68.96 36.96 75.52a69.76 69.76 0 0 0 17.44 10.08s5.12 102.88-21.92 157.92zM784 297.28c4.96 3.52 2.56-5.92 3.52-9.44a170.24 170.24 0 0 0-44.48-37.44 12.8 12.8 0 0 0-4 11.04c0.64 2.4 39.68 32.32 44.96 35.84z m-42.56 4.48s-4.96 8.96-3.52 11.04 56 48.96 56 48.96a13.76 13.76 0 0 0 3.04-9.44 400 400 0 0 0-55.84-50.56zM784 395.36c1.44 0 3.04-6.56 3.04-11.04a390.4 390.4 0 0 0-53.44-44.48c-3.04-1.44-7.04 10.08-8 14.56s56.64 41.44 58.4 40.96z m-115.52-71.04A39.52 39.52 0 0 0 612.64 288c-41.92 16-38.56 72-13.44 84.48a52.32 52.32 0 0 0 68.96-48.16z m-51.84-23.84a27.36 27.36 0 0 1 38.4 25.6 36.16 36.16 0 0 1-48 32.8c-17.28-8.64-19.84-47.04 9.28-58.4z m-398.4 139.84c4.96 0 1.44-12 9.44-41.92a140.64 140.64 0 0 1 32.96-55.52c1.44-1.44-16-10.72-17.44-9.92-5.44 2.08-20.48 32-28.96 51.04a176 176 0 0 0-12.96 53.44c0.96 2.88 11.84 3.36 16.96 2.88zM512 422.4c-10.08-80-77.76-101.44-119.04-91.04-120.96 30.4-91.84 132.64-27.2 171.52s156.48-1.12 146.24-80.48z m-131.68 54.88c-43.68-26.72-64-96 18.56-116.16a66.72 66.72 0 0 1 80 61.6c7.52 53.92-54.72 81.28-98.4 54.56zM272 566.88c-0.96-32-25.76-36.8-34.56-32.96-47.04 20.48-34.56 72.48-10.56 78.56s46.24-13.12 45.12-45.6z m-41.44 32.96c-16-5.92-19.52-38.56 10.08-48 10.08-3.2 21.44 8.48 20 23.04s-14.4 30.88-29.92 24.96zM480 638.4a37.28 37.28 0 0 0 11.52 71.52 39.84 39.84 0 0 0 38.56-52c-4.96-24.16-27.36-31.36-50.08-19.52z m3.52 56c-16-8-17.44-28.96 3.52-41.44a19.36 19.36 0 0 1 31.04 16.96 25.12 25.12 0 0 1-33.92 24.48z m-140 7.04c-12.48-9.92-9.92-19.04-12-20.96a48 48 0 0 0-12.48 1.44c-3.52 1.44 4 18.08 12 25.44a65.12 65.12 0 0 0 24 15.04c3.52 0 4.48-4 5.44-7.52s-3.84-3.52-16.32-13.6zM320 718.4a103.52 103.52 0 0 1-22.56-33.92s-11.04 0-13.44 3.04 7.52 18.56 16.96 29.44a240 240 0 0 0 34.08 32c3.52 1.44 8-3.52 9.44-7.04S336 734.4 320 718.4z m-23.04 16a312.64 312.64 0 0 1-29.92-45.92 61.12 61.12 0 0 0-14.56 5.44c-3.04 2.56 4.96 16 20.48 33.44s36.96 38.08 42.08 37.44a7.68 7.68 0 0 0 7.52-5.92c1.6-2.56-7.36-4.48-24.8-24z m328 24c-41.92 2.56-28.48 44.48-14.56 52s36 10.08 42.08-16-3.68-36.96-26.72-35.52z m15.04 36.48a13.92 13.92 0 0 1-24.48 0 16 16 0 0 1 11.52-23.52 16 16 0 0 1 12.96 23.52z m77.44-226.56c-55.52 12.96-68.96 50.56-52 89.44s32 41.44 63.04 35.04 70.56-36.48 59.52-79.04-30.72-54.88-70.88-45.44z m33.44 100c-25.44 16-37.44 20-61.92-2.56s-29.92-65.44 24-82.56c13.12-4.16 42.08-13.44 53.44 18.08s9.76 51.04-15.68 67.04zM844.16 512c-3.52 0-8 7.52-8.48 11.04a276.48 276.48 0 0 0 38.56 38.08c2.08 0.96 4.48-4.96 4.48-8.96A170.24 170.24 0 0 0 844.16 512z m-32 33.92a612.96 612.96 0 0 0 52.96 55.52c2.08 0.96 3.04-4.96 3.52-9.44s-48-52.8-48-56-6.88 8-8 9.76z m6.08 36.48c-1.92 0-9.92 10.08-9.92 11.52s46.08 47.04 48 48 4.96-7.52 4.96-11.04a357.12 357.12 0 0 0-42.56-48.48z";
+
+function logoIcon(className = "h-8 w-8") {
+  return `<svg class="${className}" viewBox="0 0 1024 1024" aria-hidden="true" focusable="false" xmlns="http://www.w3.org/2000/svg"><path d="${logoPath}" fill="currentColor"></path></svg>`;
+}
 
 function orderPage(planName: string, outTradeNo: string, fee: number, billingCycle: string) {
   const cycleLabel = billingCycle === 'yearly' ? '年度' : '月度';
@@ -243,31 +251,30 @@ function orderPage(planName: string, outTradeNo: string, fee: number, billingCyc
 
     <main class="max-w-md mx-auto px-4 py-12">
       <div class="text-center mb-8">
-        <div class="text-4xl mb-4">💰</div>
-        <h1 class="text-2xl font-bold text-[#f5f5dc]">确认订单</h1>
-        <p class="text-[#a0937d] mt-2">即将跳转至支付</p>
+        <h1 class="text-2xl font-bold text-[#1c1b18]">确认订单</h1>
+        <p class="text-[#4f4f4f] mt-2">即将跳转至支付</p>
       </div>
 
-      <div class="bg-[#1a1410] border border-[#3d2f1f] rounded-2xl p-6">
+      <div class="bg-[#ffffff] border border-[#25221c] rounded-lg p-6">
         <div class="space-y-4">
-          <div class="flex justify-between text-[#a0937d] text-sm">
+          <div class="flex justify-between text-[#4f4f4f] text-sm">
             <span>订单号</span>
-            <span class="text-[#f5f5dc]">${outTradeNo}</span>
+            <span class="text-[#1c1b18]">${outTradeNo}</span>
           </div>
-          <div class="flex justify-between text-[#a0937d] text-sm">
+          <div class="flex justify-between text-[#4f4f4f] text-sm">
             <span>套餐</span>
-            <span class="text-[#f5f5dc]">${planName}</span>
+            <span class="text-[#1c1b18]">${planName}</span>
           </div>
-          <div class="flex justify-between text-[#a0937d] text-sm">
+          <div class="flex justify-between text-[#4f4f4f] text-sm">
             <span>周期</span>
-            <span class="text-[#f5f5dc]">${cycleLabel}</span>
+            <span class="text-[#1c1b18]">${cycleLabel}</span>
           </div>
-          <div class="flex justify-between text-[#a0937d] text-sm">
+          <div class="flex justify-between text-[#4f4f4f] text-sm">
             <span>金额</span>
-            <span class="text-[#f5f5dc] text-xl font-bold">¥${(fee / 100).toFixed(2)}</span>
+            <span class="text-[#1c1b18] text-xl font-bold">¥${(fee / 100).toFixed(2)}</span>
           </div>
-          <div class="border-t border-[#3d2f1f] pt-4">
-            <button id="payBtn" class="w-full bg-[#f5f5dc] text-black py-3 rounded-full font-medium hover:bg-[#d4c4a8]">正在唤起支付...</button>
+          <div class="border-t border-[#25221c] pt-4">
+            <button id="payBtn" class="w-full bg-[#1c1b18] text-[#f4f4f0] py-3 rounded-sm font-medium hover:bg-[#2f332d]">正在唤起支付...</button>
           </div>
         </div>
       </div>
@@ -288,7 +295,7 @@ function orderPage(planName: string, outTradeNo: string, fee: number, billingCyc
           document.getElementById("payBtn").textContent = "支付失败，点击重试";
           document.getElementById("payBtn").onclick = function() { location.reload(); };
         } else {
-          document.getElementById("payBtn").textContent = "✅ 支付成功";
+          document.getElementById("payBtn").textContent = "支付成功";
           document.getElementById("payBtn").disabled = true;
           setTimeout(function() { window.location.href = result.payment_url || "/order/success?trade_no=${outTradeNo}"; }, 500);
         }
@@ -307,31 +314,30 @@ function orderSuccessPage(outTradeNo: string, planName: string = '', billingCycl
 
     <main class="max-w-md mx-auto px-4 py-12">
       <div class="text-center mb-8">
-        <div class="text-6xl mb-4">🎉</div>
-        <h1 class="text-2xl font-bold text-[#f5f5dc]">支付成功！</h1>
-        <p class="text-[#f5f5dc] mt-2 font-medium">您的订阅已成功激活</p>
+        <h1 class="text-2xl font-bold text-[#1c1b18]">支付成功！</h1>
+        <p class="text-[#1c1b18] mt-2 font-medium">您的订阅已成功激活</p>
       </div>
 
-      <div class="bg-[#1a1410] border border-[#3d2f1f] rounded-2xl p-6 text-center">
+      <div class="bg-[#ffffff] border border-[#25221c] rounded-lg p-6 text-center">
         ${planName ? `
-        <div class="mb-6 p-4 bg-[#2d241c] rounded-xl">
-          <div class="text-[#7a6f5d] text-sm mb-1">开通套餐</div>
-          <div class="text-[#f5f5dc] text-xl font-bold">${planName} · ${cycleLabel}</div>
+        <div class="mb-6 p-4 bg-[#f4f4f0] rounded-lg">
+          <div class="text-[#747474] text-sm mb-1">开通套餐</div>
+          <div class="text-[#1c1b18] text-xl font-bold">${planName} · ${cycleLabel}</div>
         </div>
         ` : ''}
         <div class="space-y-2 text-left mb-6">
-          <div class="flex items-center gap-3 text-[#a0937d] text-sm">
-            <span class="text-green-400">✓</span> 订阅已激活，可立即使用
+          <div class="flex items-center gap-3 text-[#4f4f4f] text-sm">
+            <span class="text-green-400">-</span> 订阅已激活，可立即使用
           </div>
-          <div class="flex items-center gap-3 text-[#a0937d] text-sm">
-            <span class="text-green-400">✓</span> 额度已添加到您的账户
+          <div class="flex items-center gap-3 text-[#4f4f4f] text-sm">
+            <span class="text-green-400">-</span> 额度已添加到您的账户
           </div>
-          <div class="flex items-center gap-3 text-[#a0937d] text-sm">
-            <span class="text-green-400">✓</span> 激活通知已发送至邮箱
+          <div class="flex items-center gap-3 text-[#4f4f4f] text-sm">
+            <span class="text-green-400">-</span> 激活通知已发送至邮箱
           </div>
         </div>
-        <p class="text-[#7a6f5d] text-sm mb-4">订单号：${outTradeNo}</p>
-        <a href="/dashboard" class="inline-block bg-[#f5f5dc] text-black px-8 py-3 rounded-full font-medium hover:bg-[#d4c4a8]">前往使用 →</a>
+        <p class="text-[#747474] text-sm mb-4">订单号：${outTradeNo}</p>
+        <a href="/dashboard" class="inline-block bg-[#1c1b18] text-[#f4f4f0] px-8 py-3 rounded-sm font-medium hover:bg-[#2f332d]">前往使用 →</a>
       </div>
     </main>
 
@@ -345,14 +351,13 @@ function orderCancelPage(outTradeNo: string) {
 
     <main class="max-w-md mx-auto px-4 py-12">
       <div class="text-center mb-8">
-        <div class="text-6xl mb-4">❌</div>
-        <h1 class="text-2xl font-bold text-[#f5f5dc]">支付取消</h1>
-        <p class="text-[#a0937d] mt-2">您已取消支付</p>
+        <h1 class="text-2xl font-bold text-[#1c1b18]">支付取消</h1>
+        <p class="text-[#4f4f4f] mt-2">您已取消支付</p>
       </div>
 
-      <div class="bg-[#1a1410] border border-[#3d2f1f] rounded-2xl p-6 text-center">
-        <p class="text-[#a0937d] text-sm mb-6">订单号：${outTradeNo}</p>
-        <a href="/pricing" class="inline-block border border-[#f5f5dc] text-[#f5f5dc] px-6 py-3 rounded-full font-medium hover:bg-[#f5f5dc] hover:text-black">重新选择套餐</a>
+      <div class="bg-[#ffffff] border border-[#25221c] rounded-lg p-6 text-center">
+        <p class="text-[#4f4f4f] text-sm mb-6">订单号：${outTradeNo}</p>
+        <a href="/pricing" class="inline-block border border-[#1c1b18] text-[#1c1b18] px-6 py-3 rounded-sm font-medium hover:bg-[#1c1b18] hover:text-[#f4f4f0]">重新选择套餐</a>
       </div>
     </main>
 
@@ -362,15 +367,15 @@ function orderCancelPage(outTradeNo: string) {
 
 function ordersPage(email: string, orders: Order[]) {
   const ordersHtml = orders.length === 0
-    ? '<p class="text-[#7a6f5d] text-sm">暂无订单</p>'
+    ? '<p class="text-[#747474] text-sm">暂无订单</p>'
     : orders.map(order => `
-      <div class="bg-[#1a1410] border border-[#3d2f1f] rounded-2xl p-6 mb-4">
+      <div class="bg-[#ffffff] border border-[#25221c] rounded-lg p-6 mb-4">
         <div class="flex justify-between items-start mb-3">
           <div>
-            <div class="text-[#f5f5dc] font-medium">${order.plan}</div>
-            <div class="text-[#7a6f5d] text-xs mt-1">订单号：${order.out_trade_no}</div>
+            <div class="text-[#1c1b18] font-medium">${order.plan}</div>
+            <div class="text-[#747474] text-xs mt-1">订单号：${order.out_trade_no}</div>
           </div>
-          <span class="px-3 py-1 rounded-full text-xs ${
+          <span class="px-3 py-1 rounded-sm text-xs ${
             order.status === 'paid' ? 'bg-green-900/30 text-green-200' :
             order.status === 'pending' ? 'bg-yellow-900/30 text-yellow-200' :
             order.status === 'cancelled' ? 'bg-red-900/30 text-red-200' :
@@ -382,9 +387,9 @@ function ordersPage(email: string, orders: Order[]) {
             order.status
           }</span>
         </div>
-        <div class="flex justify-between text-[#a0937d] text-sm">
+        <div class="flex justify-between text-[#4f4f4f] text-sm">
           <span>${order.created_at}</span>
-          <span class="text-[#f5f5dc] font-bold">¥${(order.fee / 100).toFixed(2)}</span>
+          <span class="text-[#1c1b18] font-bold">¥${(order.fee / 100).toFixed(2)}</span>
         </div>
       </div>
     `).join('');
@@ -395,10 +400,10 @@ function ordersPage(email: string, orders: Order[]) {
     <main class="max-w-3xl mx-auto px-4 py-12">
       <div class="mb-8 flex justify-between items-center">
         <div>
-          <h1 class="text-2xl font-bold text-[#f5f5dc]">订单历史 📝</h1>
-          <p class="text-[#a0937d]">${email}</p>
+          <h1 class="text-2xl font-bold text-[#1c1b18]">订单历史</h1>
+          <p class="text-[#4f4f4f]">${email}</p>
         </div>
-        <a href="/dashboard" class="text-[#a0937d] hover:text-[#f5f5dc] text-sm">← 返回后台</a>
+        <a href="/dashboard" class="text-[#4f4f4f] hover:text-[#1c1b18] text-sm">← 返回后台</a>
       </div>
 
       <div>
@@ -416,52 +421,51 @@ function selectPlanPage() {
 
     <main class="max-w-5xl mx-auto px-4 py-12">
       <div class="text-center mb-12">
-        <div class="text-4xl mb-4">💰</div>
-        <h1 class="text-3xl font-bold text-[#f5f5dc] mb-2">选择套餐</h1>
-        <p class="text-[#a0937d]">选择适合你的使用量</p>
+        <h1 class="text-3xl font-bold text-[#1c1b18] mb-2">选择套餐</h1>
+        <p class="text-[#4f4f4f]">选择适合你的使用量</p>
       </div>
 
       <!-- Billing Cycle Toggle -->
       <div class="flex justify-center mb-8">
-        <div class="inline-flex rounded-full bg-[#1a1410] border border-[#3d2f1f] p-1">
-          <button type="button" id="cycleMonthly" onclick="setBillingCycle('monthly')" class="px-6 py-2 rounded-full text-sm font-medium transition-all bg-[#f5f5dc] text-black">月度</button>
-          <button type="button" id="cycleYearly" onclick="setBillingCycle('yearly')" class="px-6 py-2 rounded-full text-sm font-medium transition-all text-[#a0937d] hover:text-[#f5f5dc]">年度 <span class="text-green-400 text-xs">8折</span></button>
+        <div class="inline-flex rounded-sm bg-[#ffffff] border border-[#25221c] p-1">
+          <button type="button" id="cycleMonthly" onclick="setBillingCycle('monthly')" class="px-6 py-2 rounded-sm text-sm font-medium transition-all bg-[#1c1b18] text-[#f4f4f0]">月度</button>
+          <button type="button" id="cycleYearly" onclick="setBillingCycle('yearly')" class="px-6 py-2 rounded-sm text-sm font-medium transition-all text-[#4f4f4f] hover:text-[#1c1b18]">年度 <span class="text-green-400 text-xs">8折</span></button>
         </div>
       </div>
 
       <!-- Confirmation Modal -->
-      <div id="confirmModal" class="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 hidden flex items-center justify-center">
-        <div class="bg-[#1a1410] border border-[#3d2f1f] rounded-2xl p-8 max-w-md mx-4">
-          <h3 class="text-xl font-bold text-[#f5f5dc] mb-4">确认订单</h3>
-          <div id="confirmDetails" class="text-[#a0937d] text-sm mb-6 space-y-2"></div>
+      <div id="confirmModal" class="fixed inset-0 bg-[#f4f4f0]/70 backdrop-blur-sm z-50 hidden flex items-center justify-center">
+        <div class="bg-[#ffffff] border border-[#25221c] rounded-lg p-8 max-w-md mx-4">
+          <h3 class="text-xl font-bold text-[#1c1b18] mb-4">确认订单</h3>
+          <div id="confirmDetails" class="text-[#4f4f4f] text-sm mb-6 space-y-2"></div>
           <div class="flex gap-4">
-            <button onclick="closeConfirmModal()" class="flex-1 border border-[#3d2f1f] text-[#f5f5dc] px-6 py-3 rounded-full font-medium hover:bg-[#2d241c]">取消</button>
-            <button id="confirmBtn" class="flex-1 bg-[#f5f5dc] text-black px-6 py-3 rounded-full font-medium hover:bg-[#d4c4a8]">确认支付</button>
+            <button onclick="closeConfirmModal()" class="flex-1 border border-[#25221c] text-[#1c1b18] px-6 py-3 rounded-sm font-medium hover:bg-[#f4f4f0]">取消</button>
+            <button id="confirmBtn" class="flex-1 bg-[#1c1b18] text-[#f4f4f0] px-6 py-3 rounded-sm font-medium hover:bg-[#2f332d]">确认支付</button>
           </div>
         </div>
       </div>
 
       <div class="grid md:grid-cols-3 gap-6">
         ${plans.map((plan, i) => `
-          <div class="bg-[#1a1410] border ${i === 1 ? 'border-[#f5f5dc] ring-1 ring-[#f5f5dc]' : 'border-[#3d2f1f]'} rounded-2xl p-8 text-center">
-            ${i === 1 ? '<div class="text-[#f5f5dc] text-xs font-medium mb-2">推荐</div>' : ''}
-            <h2 class="text-[#f5f5dc] text-xl font-bold mb-4">${plan.name}</h2>
-            <div class="text-[#f5f5dc] text-4xl font-bold mb-1"><span id="price-${plan.name}">${plan.price}</span></div>
-            <div id="price-note-${plan.name}" class="text-[#a0937d] text-sm mb-2"></div>
+          <div class="bg-[#ffffff] border ${i === 1 ? 'border-[#1c1b18] ring-1 ring-[#1c1b18]' : 'border-[#25221c]'} rounded-lg p-8 text-center">
+            ${i === 1 ? '<div class="text-[#1c1b18] text-xs font-medium mb-2">推荐</div>' : ''}
+            <h2 class="text-[#1c1b18] text-xl font-bold mb-4">${plan.name}</h2>
+            <div class="text-[#1c1b18] text-4xl font-bold mb-1"><span id="price-${plan.name}">${plan.price}</span></div>
+            <div id="price-note-${plan.name}" class="text-[#4f4f4f] text-sm mb-2"></div>
             <div id="discount-tag-${plan.name}" class="hidden mb-4">
-              <span class="inline-block bg-green-900/40 text-green-300 px-3 py-1 rounded-full text-sm">🎉 年付7.2折起</span>
+              <span class="inline-block bg-green-900/40 text-green-300 px-3 py-1 rounded-sm text-sm">年付7.2折起</span>
             </div>
-            <ul class="text-left text-[#a0937d] text-sm space-y-3 mb-8">
+            <ul class="text-left text-[#4f4f4f] text-sm space-y-3 mb-8">
               <li class="flex items-center gap-2"><span>🌕</span> ${plan.fullMoon}</li>
               <li class="flex items-center gap-2"><span>🌓</span> ${plan.halfMoon}</li>
-              <li class="flex items-center gap-2"><span>🌑</span> ${plan.newMoon}</li>
-              <li class="flex items-center gap-2"><span>✓</span> 自动路由切换</li>
-              ${i === 2 ? '<li class="flex items-center gap-2"><span>✓</span> 长上下文</li><li class="flex items-center gap-2"><span>✓</span> 高优先级</li>' : ''}
+              <li class="flex items-center gap-2"><span>🌒</span> ${plan.newMoon}</li>
+              <li class="flex items-center gap-2"><span>-</span> 自动路由切换</li>
+              ${i === 2 ? '<li class="flex items-center gap-2"><span>-</span> 长上下文</li><li class="flex items-center gap-2"><span>-</span> 高优先级</li>' : ''}
             </ul>
             <form method="POST" action="/order/create" id="form-${plan.name}">
               <input type="hidden" name="plan" value="${plan.name}" />
               <input type="hidden" name="billing_cycle" id="billing_cycle-${plan.name}" value="monthly" />
-              <button type="button" onclick="showConfirm('${plan.name}')" class="block w-full ${i === 1 ? 'bg-[#f5f5dc] text-black' : 'border border-[#f5f5dc] text-[#f5f5dc]'} px-6 py-3 rounded-full font-medium hover:opacity-90">立即开通</button>
+              <button type="button" onclick="showConfirm('${plan.name}')" class="block w-full ${i === 1 ? 'bg-[#1c1b18] text-[#f4f4f0]' : 'border border-[#1c1b18] text-[#1c1b18]'} px-6 py-3 rounded-sm font-medium hover:opacity-90">立即开通</button>
             </form>
           </div>
         `).join('')}
@@ -485,8 +489,8 @@ function selectPlanPage() {
 
       function setBillingCycle(cycle) {
         currentCycle = cycle;
-        document.getElementById('cycleMonthly').className = cycle === 'monthly' ? 'px-6 py-2 rounded-full text-sm font-medium transition-all bg-[#f5f5dc] text-black' : 'px-6 py-2 rounded-full text-sm font-medium transition-all text-[#a0937d] hover:text-[#f5f5dc]';
-        document.getElementById('cycleYearly').className = cycle === 'yearly' ? 'px-6 py-2 rounded-full text-sm font-medium transition-all bg-[#f5f5dc] text-black' : 'px-6 py-2 rounded-full text-sm font-medium transition-all text-[#a0937d] hover:text-[#f5f5dc]';
+        document.getElementById('cycleMonthly').className = cycle === 'monthly' ? 'px-6 py-2 rounded-sm text-sm font-medium transition-all bg-[#1c1b18] text-[#f4f4f0]' : 'px-6 py-2 rounded-sm text-sm font-medium transition-all text-[#4f4f4f] hover:text-[#1c1b18]';
+        document.getElementById('cycleYearly').className = cycle === 'yearly' ? 'px-6 py-2 rounded-sm text-sm font-medium transition-all bg-[#1c1b18] text-[#f4f4f0]' : 'px-6 py-2 rounded-sm text-sm font-medium transition-all text-[#4f4f4f] hover:text-[#1c1b18]';
 
         ['入门', '普通', '高级'].forEach(function(planName) {
           var price = cycle === 'yearly' ? yearlyPrices[planName] : monthlyPrices[planName];
@@ -503,9 +507,9 @@ function selectPlanPage() {
         var monthlyEquivalent = currentCycle === 'yearly' ? '（相当于 ¥' + (price / 12 / 100).toFixed(0) + '/月）' : '';
 
         document.getElementById('confirmDetails').innerHTML =
-          '<div><span class="text-[#7a6f5d]">套餐：</span><span class="text-[#f5f5dc]">' + planName + '</span></div>' +
-          '<div><span class="text-[#7a6f5d]">周期：</span><span class="text-[#f5f5dc]">' + cycleLabel + '</span></div>' +
-          '<div><span class="text-[#7a6f5d]">金额：</span><span class="text-[#f5f5dc] text-xl font-bold">¥' + (price / 100).toFixed(2) + '</span>' + monthlyEquivalent + '</div>';
+          '<div><span class="text-[#747474]">套餐：</span><span class="text-[#1c1b18]">' + planName + '</span></div>' +
+          '<div><span class="text-[#747474]">周期：</span><span class="text-[#1c1b18]">' + cycleLabel + '</span></div>' +
+          '<div><span class="text-[#747474]">金额：</span><span class="text-[#1c1b18] text-xl font-bold">¥' + (price / 100).toFixed(2) + '</span>' + monthlyEquivalent + '</div>';
 
         document.getElementById('confirmBtn').onclick = function() {
           document.getElementById('form-' + planName).submit();
@@ -533,13 +537,13 @@ app.get("/styles.css", (c) => {
   c.header("Content-Type", "text/css; charset=utf-8");
   return c.text(
     compiledStyles ||
-      "body{margin:0;font-family:ui-sans-serif,system-ui,-apple-system,sans-serif;background:#000;color:#f5f5dc;}"
+      "body{margin:0;font-family:ui-sans-serif,system-ui,-apple-system,sans-serif;background:#f4f4f0;color:#1c1b18;}"
   );
 });
 
 function baseHtml(content: string) {
   return `<!doctype html>
-<html lang="zh-CN" data-theme="coffee">
+<html lang="zh-CN" data-theme="lofi">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
@@ -548,10 +552,18 @@ function baseHtml(content: string) {
     <style>
       html { box-sizing: border-box; }
       *, *::before, *::after { box-sizing: inherit; }
-      body { margin: 0; font-family: ui-sans-serif, system-ui, -apple-system, sans-serif; }
+      body {
+        margin: 0;
+        font-family: ui-sans-serif, system-ui, -apple-system, sans-serif;
+        background-image:
+          linear-gradient(rgba(28, 27, 24, 0.035) 1px, transparent 1px),
+          linear-gradient(90deg, rgba(28, 27, 24, 0.035) 1px, transparent 1px);
+        background-size: 28px 28px;
+      }
+      ::selection { background: #1c1b18; color: #f4f4f0; }
     </style>
   </head>
-  <body class="bg-black text-[#f5f5dc] min-h-screen">
+  <body class="bg-[#f4f4f0] text-[#1c1b18] min-h-screen">
     ${content}
   </body>
 </html>`;
@@ -559,18 +571,18 @@ function baseHtml(content: string) {
 
 function navbar(currentPath: string = "/") {
   return `
-  <nav class="border-b border-[#3d2f1f] px-4 py-4">
+  <nav class="border-b border-[#25221c] px-4 py-4">
     <div class="max-w-5xl mx-auto flex items-center justify-between">
-      <a href="/" class="flex items-center gap-2 text-[#f5f5dc] hover:text-[#f5f5dc]">
-        <span class="text-2xl">🌙</span>
+      <a href="/" class="flex items-center gap-2 text-[#1c1b18] hover:text-[#1c1b18]">
+        ${logoIcon("h-7 w-7")}
         <span class="font-bold text-lg">MOON</span>
       </a>
       <div class="flex items-center gap-6 text-sm">
-        <a href="/" class="hover:text-[#d4c4a8] ${currentPath === '/' ? 'text-[#f5f5dc] font-semibold' : 'text-[#a0937d]'}">首页</a>
-        <a href="/pricing" class="hover:text-[#d4c4a8] ${currentPath === '/pricing' ? 'text-[#f5f5dc] font-semibold' : 'text-[#a0937d]'}">套餐</a>
-        <a href="/docs" class="hover:text-[#d4c4a8] ${currentPath === '/docs' ? 'text-[#f5f5dc] font-semibold' : 'text-[#a0937d]'}">API 文档</a>
-        <a href="/login" class="text-[#a0937d] hover:text-[#f5f5dc]">登录</a>
-        <a href="/register" class="bg-[#f5f5dc] text-black px-4 py-2 rounded-full text-sm font-medium hover:bg-[#d4c4a8]">注册</a>
+        <a href="/" class="hover:text-[#2f332d] ${currentPath === '/' ? 'text-[#1c1b18] font-semibold' : 'text-[#4f4f4f]'}">首页</a>
+        <a href="/pricing" class="hover:text-[#2f332d] ${currentPath === '/pricing' ? 'text-[#1c1b18] font-semibold' : 'text-[#4f4f4f]'}">套餐</a>
+        <a href="/docs" class="hover:text-[#2f332d] ${currentPath === '/docs' ? 'text-[#1c1b18] font-semibold' : 'text-[#4f4f4f]'}">API 文档</a>
+        <a href="/login" class="text-[#4f4f4f] hover:text-[#1c1b18]">登录</a>
+        <a href="/register" class="bg-[#1c1b18] text-[#f4f4f0] px-4 py-2 rounded-sm text-sm font-medium hover:bg-[#2f332d]">注册</a>
       </div>
     </div>
   </nav>`;
@@ -578,9 +590,9 @@ function navbar(currentPath: string = "/") {
 
 function footer() {
   return `
-  <footer class="border-t border-[#3d2f1f] px-4 py-8 mt-16">
-    <div class="max-w-5xl mx-auto text-center text-[#a0937d] text-sm">
-      <p class="text-2xl mb-2">🌙</p>
+  <footer class="border-t border-[#25221c] px-4 py-8 mt-16">
+    <div class="max-w-5xl mx-auto text-center text-[#4f4f4f] text-sm">
+      <div class="mx-auto mb-2 h-8 w-8 text-[#1c1b18]">${logoIcon("h-8 w-8")}</div>
       <p>MOON — Model Always Online</p>
     </div>
   </footer>`;
@@ -596,31 +608,30 @@ function loginPageWithError(error: string) {
 
     <main class="max-w-md mx-auto px-4 py-12">
       <div class="text-center mb-8">
-        <div class="text-4xl mb-4">🌙</div>
-        <h1 class="text-2xl font-bold text-[#f5f5dc]">登录 MOON</h1>
-        <p class="text-[#a0937d] mt-2">欢迎回来</p>
+        <h1 class="text-2xl font-bold text-[#1c1b18]">登录 MOON</h1>
+        <p class="text-[#4f4f4f] mt-2">欢迎回来</p>
       </div>
 
-      <div class="bg-[#1a1410] border border-[#3d2f1f] rounded-2xl p-6">
+      <div class="bg-[#ffffff] border border-[#25221c] rounded-lg p-6">
         <div id="errorBox" class="bg-red-900/30 border border-red-800 text-red-200 rounded-lg px-4 py-3 mb-4 text-sm">${error}</div>
         <form id="loginForm" method="POST" action="/login" class="space-y-4">
           <div>
-            <label class="text-[#a0937d] text-sm block mb-2">邮箱</label>
-            <input type="email" name="email" id="emailInput" placeholder="your@email.com" class="w-full bg-black border border-[#3d2f1f] rounded-lg px-4 py-3 text-[#f5f5dc] placeholder-[#5a4d3d] focus:border-[#f5f5dc] outline-none" />
+            <label class="text-[#4f4f4f] text-sm block mb-2">邮箱</label>
+            <input type="email" name="email" id="emailInput" placeholder="your@email.com" class="w-full bg-[#f4f4f0] border border-[#25221c] rounded-lg px-4 py-3 text-[#1c1b18] placeholder-[#9a9a9a] focus:border-[#1c1b18] outline-none" />
             <div id="emailError" class="text-red-400 text-xs mt-1 hidden"></div>
           </div>
           <div>
-            <label class="text-[#a0937d] text-sm block mb-2">密码</label>
-            <input type="password" name="password" id="passwordInput" placeholder="••••••••" class="w-full bg-black border border-[#3d2f1f] rounded-lg px-4 py-3 text-[#f5f5dc] placeholder-[#5a4d3d] focus:border-[#f5f5dc] outline-none" />
+            <label class="text-[#4f4f4f] text-sm block mb-2">密码</label>
+            <input type="password" name="password" id="passwordInput" placeholder="••••••••" class="w-full bg-[#f4f4f0] border border-[#25221c] rounded-lg px-4 py-3 text-[#1c1b18] placeholder-[#9a9a9a] focus:border-[#1c1b18] outline-none" />
             <div id="passwordError" class="text-red-400 text-xs mt-1 hidden"></div>
           </div>
           <div class="flex items-center justify-between">
-            <label class="flex items-center gap-2 text-[#a0937d] text-sm cursor-pointer">
-              <input type="checkbox" name="remember" id="rememberInput" class="w-4 h-4 rounded border-[#3d2f1f] bg-black checked:bg-[#f5f5dc] checked:border-[#f5f5dc]" />
+            <label class="flex items-center gap-2 text-[#4f4f4f] text-sm cursor-pointer">
+              <input type="checkbox" name="remember" id="rememberInput" class="w-4 h-4 rounded border-[#25221c] bg-[#f4f4f0] checked:bg-[#1c1b18] checked:border-[#1c1b18]" />
               <span>记住我</span>
             </label>
           </div>
-          <button type="submit" id="submitBtn" class="w-full bg-[#f5f5dc] text-black py-3 rounded-full font-medium hover:bg-[#d4c4a8] disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2">
+          <button type="submit" id="submitBtn" class="w-full bg-[#1c1b18] text-[#f4f4f0] py-3 rounded-sm font-medium hover:bg-[#2f332d] disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2">
             <span id="btnText">登录</span>
             <svg id="loadingSpinner" class="animate-spin hidden w-5 h-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
               <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
@@ -629,8 +640,8 @@ function loginPageWithError(error: string) {
           </button>
         </form>
 
-        <div class="mt-6 text-center text-[#7a6f5d] text-sm">
-          还没有账号？<a href="/register" class="text-[#f5f5dc] hover:underline">立即注册</a>
+        <div class="mt-6 text-center text-[#747474] text-sm">
+          还没有账号？<a href="/register" class="text-[#1c1b18] hover:underline">立即注册</a>
         </div>
       </div>
     </main>
@@ -664,7 +675,7 @@ function loginPageWithError(error: string) {
 
         function setInputError(input, hasError) {
           input.classList.toggle('border-red-500', hasError);
-          input.classList.toggle('border-[#3d2f1f]', !hasError);
+          input.classList.toggle('border-[#25221c]', !hasError);
         }
 
         emailInput.addEventListener('blur', function() {
@@ -732,29 +743,28 @@ function registerPageWithError(error: string) {
 
     <main class="max-w-md mx-auto px-4 py-12">
       <div class="text-center mb-8">
-        <div class="text-4xl mb-4">🌙</div>
-        <h1 class="text-2xl font-bold text-[#f5f5dc]">注册 MOON</h1>
-        <p class="text-[#a0937d] mt-2">创建账号，开始使用</p>
+        <h1 class="text-2xl font-bold text-[#1c1b18]">注册 MOON</h1>
+        <p class="text-[#4f4f4f] mt-2">创建账号，开始使用</p>
       </div>
 
-      <div class="bg-[#1a1410] border border-[#3d2f1f] rounded-2xl p-6">
+      <div class="bg-[#ffffff] border border-[#25221c] rounded-lg p-6">
         <div class="bg-red-900/30 border border-red-800 text-red-200 rounded-lg px-4 py-3 mb-4 text-sm">
           ${error}
         </div>
         <form method="POST" action="/register" class="space-y-4">
           <div>
-            <label class="text-[#a0937d] text-sm block mb-2">邮箱</label>
-            <input type="email" name="email" placeholder="your@email.com" class="w-full bg-black border border-[#3d2f1f] rounded-lg px-4 py-3 text-[#f5f5dc] placeholder-[#5a4d3d] focus:border-[#f5f5dc] outline-none" />
+            <label class="text-[#4f4f4f] text-sm block mb-2">邮箱</label>
+            <input type="email" name="email" placeholder="your@email.com" class="w-full bg-[#f4f4f0] border border-[#25221c] rounded-lg px-4 py-3 text-[#1c1b18] placeholder-[#9a9a9a] focus:border-[#1c1b18] outline-none" />
           </div>
           <div>
-            <label class="text-[#a0937d] text-sm block mb-2">密码</label>
-            <input type="password" name="password" placeholder="设置密码" class="w-full bg-black border border-[#3d2f1f] rounded-lg px-4 py-3 text-[#f5f5dc] placeholder-[#5a4d3d] focus:border-[#f5f5dc] outline-none" />
+            <label class="text-[#4f4f4f] text-sm block mb-2">密码</label>
+            <input type="password" name="password" placeholder="设置密码" class="w-full bg-[#f4f4f0] border border-[#25221c] rounded-lg px-4 py-3 text-[#1c1b18] placeholder-[#9a9a9a] focus:border-[#1c1b18] outline-none" />
           </div>
-          <button type="submit" class="w-full bg-[#f5f5dc] text-black py-3 rounded-full font-medium hover:bg-[#d4c4a8]">注册</button>
+          <button type="submit" class="w-full bg-[#1c1b18] text-[#f4f4f0] py-3 rounded-sm font-medium hover:bg-[#2f332d]">注册</button>
         </form>
 
-        <div class="mt-6 text-center text-[#7a6f5d] text-sm">
-          已有账号？<a href="/login" class="text-[#f5f5dc] hover:underline">立即登录</a>
+        <div class="mt-6 text-center text-[#747474] text-sm">
+          已有账号？<a href="/login" class="text-[#1c1b18] hover:underline">立即登录</a>
         </div>
       </div>
     </main>
@@ -770,71 +780,56 @@ function moonPage() {
     <main class="max-w-5xl mx-auto px-4 py-12">
       <!-- Hero -->
       <section class="text-center py-16">
-        <div class="text-6xl mb-6">🌙</div>
-        <h1 class="text-4xl md:text-5xl font-bold text-[#f5f5dc] mb-4 tracking-tight">
-          大模型一直在线
+        <div class="mx-auto mb-6 h-20 w-20 text-[#1c1b18]">${logoIcon("h-20 w-20")}</div>
+        <h1 class="text-4xl md:text-5xl font-bold text-[#1c1b18] mb-4 tracking-tight">
+          无限TOKEN
         </h1>
-        <p class="text-[#a0937d] text-lg mb-2">🌕 / 🌓 / 🌑</p>
-        <p class="text-[#7a6f5d] max-w-xl mx-auto mb-8">
-          优先使用 🌕，其次 🌓，🌑 不限。自动路由，始终在线。
+        <p class="text-[#747474] max-w-xl mx-auto mb-8">
+          每日有限高智商，用完无限降智服务。
         </p>
         <div class="flex gap-4 justify-center">
-          <a href="/register" class="bg-[#f5f5dc] text-black px-6 py-3 rounded-full font-medium hover:bg-[#d4c4a8]">立即开始</a>
-          <a href="/pricing" class="border border-[#f5f5dc] text-[#f5f5dc] px-6 py-3 rounded-full font-medium hover:bg-[#f5f5dc] hover:text-black">查看套餐</a>
-        </div>
-      </section>
-
-      <!-- Tiers -->
-      <section class="py-12">
-        <h2 class="text-center text-[#f5f5dc] text-2xl font-bold mb-8">三层路由</h2>
-        <div class="grid md:grid-cols-3 gap-6">
-          ${modelTiers.map(tier => `
-            <div class="bg-[#1a1410] border border-[#3d2f1f] rounded-2xl p-6 text-center">
-              <h3 class="text-[#f5f5dc] text-xl font-bold mb-2">${tier.tier}</h3>
-              <div class="text-[#a0937d] text-sm mb-3">${tier.models.join(' / ')}</div>
-              <p class="text-[#7a6f5d] text-xs">${tier.rule}</p>
-            </div>
-          `).join('')}
+          <a href="/register" class="bg-[#1c1b18] text-[#f4f4f0] px-6 py-3 rounded-sm font-medium hover:bg-[#2f332d]">立即开始</a>
+          <a href="/pricing" class="border border-[#1c1b18] text-[#1c1b18] px-6 py-3 rounded-sm font-medium hover:bg-[#1c1b18] hover:text-[#f4f4f0]">查看套餐</a>
         </div>
       </section>
 
       <!-- How it works -->
       <section class="py-12">
-        <h2 class="text-center text-[#f5f5dc] text-2xl font-bold mb-8">工作原理 ⚡</h2>
-        <div class="grid md:grid-cols-2 gap-6">
-          <div class="bg-[#1a1410] border border-[#3d2f1f] rounded-2xl p-6">
+        <h2 class="text-center text-[#1c1b18] text-2xl font-bold mb-8">工作原理</h2>
+        <div class="grid md:grid-cols-3 gap-6">
+          <div class="bg-[#ffffff] border border-[#25221c] rounded-lg p-6">
             <div class="text-2xl mb-3">🌕</div>
-            <p class="text-[#a0937d] text-sm">复杂任务、编程、长文写作使用 GPT、Gemini、Claude 等顶级模型。</p>
+            <p class="text-[#4f4f4f] text-sm">复杂任务、编程、长文写作使用 GPT、Gemini、Claude 等顶级模型。</p>
           </div>
-          <div class="bg-[#1a1410] border border-[#3d2f1f] rounded-2xl p-6">
+          <div class="bg-[#ffffff] border border-[#25221c] rounded-lg p-6">
             <div class="text-2xl mb-3">🌓</div>
-            <p class="text-[#a0937d] text-sm">日常任务、总结、改写、翻译使用 Kimi、MiniMax、Qwen 等高效模型。</p>
+            <p class="text-[#4f4f4f] text-sm">日常任务、总结、改写、翻译使用 Kimi、MiniMax、Qwen 等高效模型。</p>
           </div>
-          <div class="bg-[#1a1410] border border-[#3d2f1f] rounded-2xl p-6 md:col-span-2">
-            <div class="text-2xl mb-3">🌑</div>
-            <p class="text-[#a0937d] text-sm">聊天、续写、润色等基础任务使用轻量快速模型，🌑 时段不限量使用。</p>
+          <div class="bg-[#ffffff] border border-[#25221c] rounded-lg p-6">
+            <div class="text-2xl mb-3">🌒</div>
+            <p class="text-[#4f4f4f] text-sm">聊天、续写、润色等基础任务使用轻量快速模型，🌒 时段不限量使用。</p>
           </div>
         </div>
       </section>
 
       <!-- Pricing preview -->
       <section class="py-12 text-center">
-        <h2 class="text-[#f5f5dc] text-2xl font-bold mb-2">简单定价 💰</h2>
-        <p class="text-[#a0937d] mb-8">选择适合你的套餐</p>
+        <h2 class="text-[#1c1b18] text-2xl font-bold mb-2">简单定价</h2>
+        <p class="text-[#4f4f4f] mb-8">选择适合你的套餐</p>
         <div class="grid md:grid-cols-3 gap-6 text-left">
           ${plans.map((plan, i) => `
-            <div class="bg-[#1a1410] border ${i === 1 ? 'border-[#f5f5dc]' : 'border-[#3d2f1f]'} rounded-2xl p-6 ${i === 1 ? 'ring-1 ring-[#f5f5dc]' : ''}">
-              <div class="text-[#a0937d] text-sm mb-1">${plan.name}</div>
-              <div class="text-[#f5f5dc] text-3xl font-bold mb-1">${plan.price}</div>
-              <ul class="text-[#a0937d] text-xs space-y-1 mt-4">
+            <div class="bg-[#ffffff] border ${i === 1 ? 'border-[#1c1b18]' : 'border-[#25221c]'} rounded-lg p-6 ${i === 1 ? 'ring-1 ring-[#1c1b18]' : ''}">
+              <div class="text-[#4f4f4f] text-sm mb-1">${plan.name}</div>
+              <div class="text-[#1c1b18] text-3xl font-bold mb-1">${plan.price}</div>
+              <ul class="text-[#4f4f4f] text-xs space-y-1 mt-4">
                 <li>🌕 ${plan.fullMoon}</li>
                 <li>🌓 ${plan.halfMoon}</li>
-                <li>🌑 ${plan.newMoon}</li>
+                <li>🌒 ${plan.newMoon}</li>
               </ul>
             </div>
           `).join('')}
         </div>
-        <a href="/pricing" class="inline-block mt-8 text-[#f5f5dc] hover:underline">查看全部套餐 →</a>
+        <a href="/pricing" class="inline-block mt-8 text-[#1c1b18] hover:underline">查看全部套餐 →</a>
       </section>
     </main>
 
@@ -848,32 +843,31 @@ function pricingPage() {
 
     <main class="max-w-5xl mx-auto px-4 py-12">
       <div class="text-center mb-12">
-        <div class="text-4xl mb-4">💰</div>
-        <h1 class="text-3xl font-bold text-[#f5f5dc] mb-2">套餐定价</h1>
-        <p class="text-[#a0937d]">选择适合你的使用量</p>
+        <h1 class="text-3xl font-bold text-[#1c1b18] mb-2">套餐定价</h1>
+        <p class="text-[#4f4f4f]">选择适合你的使用量</p>
       </div>
 
       <div class="grid md:grid-cols-3 gap-6">
         ${plans.map((plan, i) => `
-          <div class="bg-[#1a1410] border ${i === 1 ? 'border-[#f5f5dc] ring-1 ring-[#f5f5dc]' : 'border-[#3d2f1f]'} rounded-2xl p-8 text-center">
-            ${i === 1 ? '<div class="text-[#f5f5dc] text-xs font-medium mb-2">推荐</div>' : ''}
-            <h2 class="text-[#f5f5dc] text-xl font-bold mb-4">${plan.name}</h2>
-            <div class="text-[#f5f5dc] text-4xl font-bold mb-1">${plan.price}</div>
-            <div class="text-[#a0937d] text-sm mb-6"></div>
-            <ul class="text-left text-[#a0937d] text-sm space-y-3 mb-8">
+          <div class="bg-[#ffffff] border ${i === 1 ? 'border-[#1c1b18] ring-1 ring-[#1c1b18]' : 'border-[#25221c]'} rounded-lg p-8 text-center">
+            ${i === 1 ? '<div class="text-[#1c1b18] text-xs font-medium mb-2">推荐</div>' : ''}
+            <h2 class="text-[#1c1b18] text-xl font-bold mb-4">${plan.name}</h2>
+            <div class="text-[#1c1b18] text-4xl font-bold mb-1">${plan.price}</div>
+            <div class="text-[#4f4f4f] text-sm mb-6"></div>
+            <ul class="text-left text-[#4f4f4f] text-sm space-y-3 mb-8">
               <li class="flex items-center gap-2"><span>🌕</span> ${plan.fullMoon}</li>
               <li class="flex items-center gap-2"><span>🌓</span> ${plan.halfMoon}</li>
-              <li class="flex items-center gap-2"><span>🌑</span> ${plan.newMoon}</li>
-              <li class="flex items-center gap-2"><span>✓</span> 自动路由切换</li>
-              ${i === 2 ? '<li class="flex items-center gap-2"><span>✓</span> 长上下文</li><li class="flex items-center gap-2"><span>✓</span> 高优先级</li>' : ''}
+              <li class="flex items-center gap-2"><span>🌒</span> ${plan.newMoon}</li>
+              <li class="flex items-center gap-2"><span>-</span> 自动路由切换</li>
+              ${i === 2 ? '<li class="flex items-center gap-2"><span>-</span> 长上下文</li><li class="flex items-center gap-2"><span>-</span> 高优先级</li>' : ''}
             </ul>
-            <a href="/register" class="block w-full ${i === 1 ? 'bg-[#f5f5dc] text-black' : 'border border-[#f5f5dc] text-[#f5f5dc]'} px-6 py-3 rounded-full font-medium hover:opacity-90">立即开通</a>
+            <a href="/register" class="block w-full ${i === 1 ? 'bg-[#1c1b18] text-[#f4f4f0]' : 'border border-[#1c1b18] text-[#1c1b18]'} px-6 py-3 rounded-sm font-medium hover:opacity-90">立即开通</a>
           </div>
         `).join('')}
       </div>
 
-      <div class="mt-12 text-center text-[#7a6f5d] text-sm">
-        <p>🌙 所有套餐均支持随时升级或降级</p>
+      <div class="mt-12 text-center text-[#747474] text-sm">
+        <p>所有套餐均支持随时升级或降级</p>
       </div>
     </main>
 
@@ -887,31 +881,30 @@ function loginPage() {
 
     <main class="max-w-md mx-auto px-4 py-12">
       <div class="text-center mb-8">
-        <div class="text-4xl mb-4">🌙</div>
-        <h1 class="text-2xl font-bold text-[#f5f5dc]">登录 MOON</h1>
-        <p class="text-[#a0937d] mt-2">欢迎回来</p>
+        <h1 class="text-2xl font-bold text-[#1c1b18]">登录 MOON</h1>
+        <p class="text-[#4f4f4f] mt-2">欢迎回来</p>
       </div>
 
-      <div class="bg-[#1a1410] border border-[#3d2f1f] rounded-2xl p-6">
+      <div class="bg-[#ffffff] border border-[#25221c] rounded-lg p-6">
         <div id="errorBox" class="bg-red-900/30 border border-red-800 text-red-200 rounded-lg px-4 py-3 mb-4 text-sm hidden"></div>
         <form id="loginForm" method="POST" action="/login" class="space-y-4">
           <div>
-            <label class="text-[#a0937d] text-sm block mb-2">邮箱</label>
-            <input type="email" name="email" id="emailInput" placeholder="your@email.com" class="w-full bg-black border border-[#3d2f1f] rounded-lg px-4 py-3 text-[#f5f5dc] placeholder-[#5a4d3d] focus:border-[#f5f5dc] outline-none" />
+            <label class="text-[#4f4f4f] text-sm block mb-2">邮箱</label>
+            <input type="email" name="email" id="emailInput" placeholder="your@email.com" class="w-full bg-[#f4f4f0] border border-[#25221c] rounded-lg px-4 py-3 text-[#1c1b18] placeholder-[#9a9a9a] focus:border-[#1c1b18] outline-none" />
             <div id="emailError" class="text-red-400 text-xs mt-1 hidden"></div>
           </div>
           <div>
-            <label class="text-[#a0937d] text-sm block mb-2">密码</label>
-            <input type="password" name="password" id="passwordInput" placeholder="••••••••" class="w-full bg-black border border-[#3d2f1f] rounded-lg px-4 py-3 text-[#f5f5dc] placeholder-[#5a4d3d] focus:border-[#f5f5dc] outline-none" />
+            <label class="text-[#4f4f4f] text-sm block mb-2">密码</label>
+            <input type="password" name="password" id="passwordInput" placeholder="••••••••" class="w-full bg-[#f4f4f0] border border-[#25221c] rounded-lg px-4 py-3 text-[#1c1b18] placeholder-[#9a9a9a] focus:border-[#1c1b18] outline-none" />
             <div id="passwordError" class="text-red-400 text-xs mt-1 hidden"></div>
           </div>
           <div class="flex items-center justify-between">
-            <label class="flex items-center gap-2 text-[#a0937d] text-sm cursor-pointer">
-              <input type="checkbox" name="remember" id="rememberInput" class="w-4 h-4 rounded border-[#3d2f1f] bg-black checked:bg-[#f5f5dc] checked:border-[#f5f5dc]" />
+            <label class="flex items-center gap-2 text-[#4f4f4f] text-sm cursor-pointer">
+              <input type="checkbox" name="remember" id="rememberInput" class="w-4 h-4 rounded border-[#25221c] bg-[#f4f4f0] checked:bg-[#1c1b18] checked:border-[#1c1b18]" />
               <span>记住我</span>
             </label>
           </div>
-          <button type="submit" id="submitBtn" class="w-full bg-[#f5f5dc] text-black py-3 rounded-full font-medium hover:bg-[#d4c4a8] disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2">
+          <button type="submit" id="submitBtn" class="w-full bg-[#1c1b18] text-[#f4f4f0] py-3 rounded-sm font-medium hover:bg-[#2f332d] disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2">
             <span id="btnText">登录</span>
             <svg id="loadingSpinner" class="animate-spin hidden w-5 h-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
               <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
@@ -920,8 +913,8 @@ function loginPage() {
           </button>
         </form>
 
-        <div class="mt-6 text-center text-[#7a6f5d] text-sm">
-          还没有账号？<a href="/register" class="text-[#f5f5dc] hover:underline">立即注册</a>
+        <div class="mt-6 text-center text-[#747474] text-sm">
+          还没有账号？<a href="/register" class="text-[#1c1b18] hover:underline">立即注册</a>
         </div>
       </div>
     </main>
@@ -956,7 +949,7 @@ function loginPage() {
 
         function setInputError(input, hasError) {
           input.classList.toggle('border-red-500', hasError);
-          input.classList.toggle('border-[#3d2f1f]', !hasError);
+          input.classList.toggle('border-[#25221c]', !hasError);
         }
 
         emailInput.addEventListener('blur', function() {
@@ -1024,26 +1017,25 @@ function registerPage() {
 
     <main class="max-w-md mx-auto px-4 py-12">
       <div class="text-center mb-8">
-        <div class="text-4xl mb-4">🌙</div>
-        <h1 class="text-2xl font-bold text-[#f5f5dc]">注册 MOON</h1>
-        <p class="text-[#a0937d] mt-2">创建账号，开始使用</p>
+        <h1 class="text-2xl font-bold text-[#1c1b18]">注册 MOON</h1>
+        <p class="text-[#4f4f4f] mt-2">创建账号，开始使用</p>
       </div>
 
-      <div class="bg-[#1a1410] border border-[#3d2f1f] rounded-2xl p-6">
+      <div class="bg-[#ffffff] border border-[#25221c] rounded-lg p-6">
         <div id="errorBox" class="bg-red-900/30 border border-red-800 text-red-200 rounded-lg px-4 py-3 mb-4 text-sm hidden"></div>
         <form id="registerForm" method="POST" action="/register" class="space-y-4">
           <div>
-            <label class="text-[#a0937d] text-sm block mb-2">邮箱</label>
-            <input type="email" name="email" id="emailInput" placeholder="your@email.com" class="w-full bg-black border border-[#3d2f1f] rounded-lg px-4 py-3 text-[#f5f5dc] placeholder-[#5a4d3d] focus:border-[#f5f5dc] outline-none" />
+            <label class="text-[#4f4f4f] text-sm block mb-2">邮箱</label>
+            <input type="email" name="email" id="emailInput" placeholder="your@email.com" class="w-full bg-[#f4f4f0] border border-[#25221c] rounded-lg px-4 py-3 text-[#1c1b18] placeholder-[#9a9a9a] focus:border-[#1c1b18] outline-none" />
             <div id="emailError" class="text-red-400 text-xs mt-1 hidden"></div>
           </div>
           <div>
-            <label class="text-[#a0937d] text-sm block mb-2">密码</label>
-            <input type="password" name="password" id="passwordInput" placeholder="设置密码" class="w-full bg-black border border-[#3d2f1f] rounded-lg px-4 py-3 text-[#f5f5dc] placeholder-[#5a4d3d] focus:border-[#f5f5dc] outline-none" />
+            <label class="text-[#4f4f4f] text-sm block mb-2">密码</label>
+            <input type="password" name="password" id="passwordInput" placeholder="设置密码" class="w-full bg-[#f4f4f0] border border-[#25221c] rounded-lg px-4 py-3 text-[#1c1b18] placeholder-[#9a9a9a] focus:border-[#1c1b18] outline-none" />
             <div id="passwordError" class="text-red-400 text-xs mt-1 hidden"></div>
-            <div class="text-[#7a6f5d] text-xs mt-1">至少8个字符，需包含数字、字母和特殊字符</div>
+            <div class="text-[#747474] text-xs mt-1">至少8个字符，需包含数字、字母和特殊字符</div>
           </div>
-          <button type="submit" id="submitBtn" class="w-full bg-[#f5f5dc] text-black py-3 rounded-full font-medium hover:bg-[#d4c4a8] disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2">
+          <button type="submit" id="submitBtn" class="w-full bg-[#1c1b18] text-[#f4f4f0] py-3 rounded-sm font-medium hover:bg-[#2f332d] disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2">
             <span id="btnText">注册</span>
             <svg id="loadingSpinner" class="animate-spin hidden w-5 h-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
               <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
@@ -1052,8 +1044,8 @@ function registerPage() {
           </button>
         </form>
 
-        <div class="mt-6 text-center text-[#7a6f5d] text-sm">
-          已有账号？<a href="/login" class="text-[#f5f5dc] hover:underline">立即登录</a>
+        <div class="mt-6 text-center text-[#747474] text-sm">
+          已有账号？<a href="/login" class="text-[#1c1b18] hover:underline">立即登录</a>
         </div>
       </div>
     </main>
@@ -1087,7 +1079,7 @@ function registerPage() {
 
         function setInputError(input, hasError) {
           input.classList.toggle('border-red-500', hasError);
-          input.classList.toggle('border-[#3d2f1f]', !hasError);
+          input.classList.toggle('border-[#25221c]', !hasError);
         }
 
         emailInput.addEventListener('blur', function() {
@@ -1200,7 +1192,7 @@ function dashboardPage(
   const formatLimit = (n: number) => n === Infinity ? '不限' : n.toString();
 
   const warningHtml = expirationWarning
-    ? `<div class="bg-yellow-900/30 border border-yellow-700 text-yellow-200 rounded-lg px-4 py-3 mb-6 text-sm">⚠️ ${expirationWarning}</div>`
+    ? `<div class="bg-yellow-900/30 border border-yellow-700 text-yellow-200 rounded-lg px-4 py-3 mb-6 text-sm">${expirationWarning}</div>`
     : '';
 
   // Generate quota warning HTML
@@ -1217,84 +1209,84 @@ function dashboardPage(
   const usageTabsHtml = usageStats
     ? `
       <div class="mb-4 flex gap-2">
-        <button class="usage-tab px-3 py-1 rounded text-xs ${'today' === 'today' ? 'bg-[#f5f5dc] text-black' : 'bg-[#2a2018] text-[#a0937d]'}" data-period="today">今日</button>
-        <button class="usage-tab px-3 py-1 rounded text-xs ${'today' === 'week' ? 'bg-[#f5f5dc] text-black' : 'bg-[#2a2018] text-[#a0937d]'}" data-period="week">本周</button>
-        <button class="usage-tab px-3 py-1 rounded text-xs ${'today' === 'month' ? 'bg-[#f5f5dc] text-black' : 'bg-[#2a2018] text-[#a0937d]'}" data-period="month">本月</button>
+        <button class="usage-tab px-3 py-1 rounded text-xs bg-[#1c1b18] text-[#f4f4f0]" data-period="today">今日</button>
+        <button class="usage-tab px-3 py-1 rounded text-xs bg-[#2a2018] text-[#4f4f4f]" data-period="week">本周</button>
+        <button class="usage-tab px-3 py-1 rounded text-xs bg-[#2a2018] text-[#4f4f4f]" data-period="month">本月</button>
       </div>
       <div id="usageContent" class="space-y-3">
         <div class="usage-period" data-period="today">
-          <div class="flex justify-between text-[#a0937d] text-sm mb-1">
+          <div class="flex justify-between text-[#4f4f4f] text-sm mb-1">
             <span>🌕</span>
             <span>${usageStats.today.fullMoon} / ${formatLimit(usage.fullMoon.limit)} 次</span>
           </div>
-          <div class="h-2 bg-black rounded-full overflow-hidden mb-2">
-            <div class="h-full bg-[#f5f5dc] rounded-full" style="width: ${Math.min(100, (usageStats.today.fullMoon / usage.fullMoon.limit) * 100)}%"></div>
+          <div class="h-2 bg-[#f4f4f0] rounded-sm overflow-hidden mb-2">
+            <div class="h-full bg-[#1c1b18] rounded-sm" style="width: ${Math.min(100, (usageStats.today.fullMoon / usage.fullMoon.limit) * 100)}%"></div>
           </div>
-          <div class="flex justify-between text-[#a0937d] text-sm mb-1">
+          <div class="flex justify-between text-[#4f4f4f] text-sm mb-1">
             <span>🌓</span>
             <span>${usageStats.today.halfMoon} / ${formatLimit(usage.halfMoon.limit)} 次</span>
           </div>
-          <div class="h-2 bg-black rounded-full overflow-hidden">
-            <div class="h-full bg-[#d4c4a8] rounded-full" style="width: ${Math.min(100, (usageStats.today.halfMoon / usage.halfMoon.limit) * 100)}%"></div>
+          <div class="h-2 bg-[#f4f4f0] rounded-sm overflow-hidden">
+            <div class="h-full bg-[#2f332d] rounded-sm" style="width: ${Math.min(100, (usageStats.today.halfMoon / usage.halfMoon.limit) * 100)}%"></div>
           </div>
         </div>
         <div class="usage-period hidden" data-period="week">
-          <div class="flex justify-between text-[#a0937d] text-sm mb-1">
+          <div class="flex justify-between text-[#4f4f4f] text-sm mb-1">
             <span>🌕</span>
             <span>${usageStats.week.fullMoon} / ${formatLimit(usage.fullMoon.limit)} 次</span>
           </div>
-          <div class="h-2 bg-black rounded-full overflow-hidden mb-2">
-            <div class="h-full bg-[#f5f5dc] rounded-full" style="width: ${Math.min(100, (usageStats.week.fullMoon / usage.fullMoon.limit) * 100)}%"></div>
+          <div class="h-2 bg-[#f4f4f0] rounded-sm overflow-hidden mb-2">
+            <div class="h-full bg-[#1c1b18] rounded-sm" style="width: ${Math.min(100, (usageStats.week.fullMoon / usage.fullMoon.limit) * 100)}%"></div>
           </div>
-          <div class="flex justify-between text-[#a0937d] text-sm mb-1">
+          <div class="flex justify-between text-[#4f4f4f] text-sm mb-1">
             <span>🌓</span>
             <span>${usageStats.week.halfMoon} / ${formatLimit(usage.halfMoon.limit)} 次</span>
           </div>
-          <div class="h-2 bg-black rounded-full overflow-hidden">
-            <div class="h-full bg-[#d4c4a8] rounded-full" style="width: ${Math.min(100, (usageStats.week.halfMoon / usage.halfMoon.limit) * 100)}%"></div>
+          <div class="h-2 bg-[#f4f4f0] rounded-sm overflow-hidden">
+            <div class="h-full bg-[#2f332d] rounded-sm" style="width: ${Math.min(100, (usageStats.week.halfMoon / usage.halfMoon.limit) * 100)}%"></div>
           </div>
         </div>
         <div class="usage-period hidden" data-period="month">
-          <div class="flex justify-between text-[#a0937d] text-sm mb-1">
+          <div class="flex justify-between text-[#4f4f4f] text-sm mb-1">
             <span>🌕</span>
             <span>${usageStats.month.fullMoon} / ${formatLimit(usage.fullMoon.limit)} 次</span>
           </div>
-          <div class="h-2 bg-black rounded-full overflow-hidden mb-2">
-            <div class="h-full bg-[#f5f5dc] rounded-full" style="width: ${Math.min(100, (usageStats.month.fullMoon / usage.fullMoon.limit) * 100)}%"></div>
+          <div class="h-2 bg-[#f4f4f0] rounded-sm overflow-hidden mb-2">
+            <div class="h-full bg-[#1c1b18] rounded-sm" style="width: ${Math.min(100, (usageStats.month.fullMoon / usage.fullMoon.limit) * 100)}%"></div>
           </div>
-          <div class="flex justify-between text-[#a0937d] text-sm mb-1">
+          <div class="flex justify-between text-[#4f4f4f] text-sm mb-1">
             <span>🌓</span>
             <span>${usageStats.month.halfMoon} / ${formatLimit(usage.halfMoon.limit)} 次</span>
           </div>
-          <div class="h-2 bg-black rounded-full overflow-hidden">
-            <div class="h-full bg-[#d4c4a8] rounded-full" style="width: ${Math.min(100, (usageStats.month.halfMoon / usage.halfMoon.limit) * 100)}%"></div>
+          <div class="h-2 bg-[#f4f4f0] rounded-sm overflow-hidden">
+            <div class="h-full bg-[#2f332d] rounded-sm" style="width: ${Math.min(100, (usageStats.month.halfMoon / usage.halfMoon.limit) * 100)}%"></div>
           </div>
         </div>
       </div>
-      <div class="text-[#7a6f5d] text-xs mt-3">🌑 轻量模型不限量</div>
+      <div class="text-[#747474] text-xs mt-3">🌒 轻量模型不限量</div>
     `
     : `<div class="space-y-3">
         <div>
-          <div class="flex justify-between text-[#a0937d] text-sm mb-1">
+          <div class="flex justify-between text-[#4f4f4f] text-sm mb-1">
             <span>🌕</span>
             <span>${usage.fullMoon.used} / ${formatLimit(usage.fullMoon.limit)} 次</span>
           </div>
-          <div class="h-2 bg-black rounded-full overflow-hidden">
-            <div class="h-full bg-[#f5f5dc] rounded-full" style="width: ${Math.min(100, (usage.fullMoon.used / usage.fullMoon.limit) * 100)}%"></div>
+          <div class="h-2 bg-[#f4f4f0] rounded-sm overflow-hidden">
+            <div class="h-full bg-[#1c1b18] rounded-sm" style="width: ${Math.min(100, (usage.fullMoon.used / usage.fullMoon.limit) * 100)}%"></div>
           </div>
         </div>
         <div>
-          <div class="flex justify-between text-[#a0937d] text-sm mb-1">
+          <div class="flex justify-between text-[#4f4f4f] text-sm mb-1">
             <span>🌓</span>
             <span>${usage.halfMoon.used} / ${formatLimit(usage.halfMoon.limit)} 次</span>
           </div>
-          <div class="h-2 bg-black rounded-full overflow-hidden">
-            <div class="h-full bg-[#d4c4a8] rounded-full" style="width: ${Math.min(100, (usage.halfMoon.used / usage.halfMoon.limit) * 100)}%"></div>
+          <div class="h-2 bg-[#f4f4f0] rounded-sm overflow-hidden">
+            <div class="h-full bg-[#2f332d] rounded-sm" style="width: ${Math.min(100, (usage.halfMoon.used / usage.halfMoon.limit) * 100)}%"></div>
           </div>
         </div>
         <div>
-          <div class="flex justify-between text-[#a0937d] text-sm mb-1">
-            <span>🌑</span>
+          <div class="flex justify-between text-[#4f4f4f] text-sm mb-1">
+            <span>🌒</span>
             <span>不限</span>
           </div>
         </div>
@@ -1305,8 +1297,8 @@ function dashboardPage(
 
     <main class="max-w-5xl mx-auto px-4 py-12">
       <div class="mb-8">
-        <h1 class="text-2xl font-bold text-[#f5f5dc]">用户后台 🌙</h1>
-        <p class="text-[#a0937d]">${email}</p>
+        <h1 class="text-2xl font-bold text-[#1c1b18]">用户后台</h1>
+        <p class="text-[#4f4f4f]">${email}</p>
       </div>
 
       ${warningHtml}
@@ -1314,89 +1306,89 @@ function dashboardPage(
 
       <div class="grid md:grid-cols-2 gap-6">
         <!-- Current Plan -->
-        <div class="bg-[#1a1410] border border-[#3d2f1f] rounded-2xl p-6">
-          <h2 class="text-[#f5f5dc] font-bold mb-4">当前套餐</h2>
-          <div class="text-[#a0937d] text-sm mb-4">${planName}</div>
-          <div class="text-[#f5f5dc] text-2xl font-bold mb-1">${planPrice}</div>
-          <div class="text-[#7a6f5d] text-xs mb-6">${subscription?.status === 'active' ? '✅ 已激活' : '⚠️ 未激活'}</div>
-          <a href="/order/select" class="inline-block ${planIndex === 1 ? 'bg-[#f5f5dc] text-black' : 'border border-[#f5f5dc] text-[#f5f5dc]'} px-4 py-2 rounded-full text-sm font-medium hover:opacity-90">${subscription ? '升级套餐' : '开通套餐'} →</a>
+        <div class="bg-[#ffffff] border border-[#25221c] rounded-lg p-6">
+          <h2 class="text-[#1c1b18] font-bold mb-4">当前套餐</h2>
+          <div class="text-[#4f4f4f] text-sm mb-4">${planName}</div>
+          <div class="text-[#1c1b18] text-2xl font-bold mb-1">${planPrice}</div>
+          <div class="text-[#747474] text-xs mb-6">${subscription?.status === 'active' ? '已激活' : '未激活'}</div>
+          <a href="/order/select" class="inline-block ${planIndex === 1 ? 'bg-[#1c1b18] text-[#f4f4f0]' : 'border border-[#1c1b18] text-[#1c1b18]'} px-4 py-2 rounded-sm text-sm font-medium hover:opacity-90">${subscription ? '升级套餐' : '开通套餐'} →</a>
         </div>
 
         <!-- Usage -->
-        <div class="bg-[#1a1410] border border-[#3d2f1f] rounded-2xl p-6">
-          <h2 class="text-[#f5f5dc] font-bold mb-4">用量统计</h2>
+        <div class="bg-[#ffffff] border border-[#25221c] rounded-lg p-6">
+          <h2 class="text-[#1c1b18] font-bold mb-4">用量统计</h2>
           ${usageTabsHtml}
         </div>
 
         <!-- API Key -->
-        <div class="bg-[#1a1410] border border-[#3d2f1f] rounded-2xl p-6">
-          <h2 class="text-[#f5f5dc] font-bold mb-4">API Key</h2>
-          <div class="bg-black border border-[#3d2f1f] rounded-lg p-3 mb-4">
-            <code id="apiKeyDisplay" class="text-[#7a6f5d] text-xs break-all">${apiKey ? '••••••••••••••••' : 'moon_sk_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx'}</code>
+        <div class="bg-[#ffffff] border border-[#25221c] rounded-lg p-6">
+          <h2 class="text-[#1c1b18] font-bold mb-4">API Key</h2>
+          <div class="bg-[#f4f4f0] border border-[#25221c] rounded-lg p-3 mb-4">
+            <code id="apiKeyDisplay" class="text-[#747474] text-xs break-all">${apiKey ? '••••••••••••••••' : 'moon_sk_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx'}</code>
           </div>
           <div class="flex items-center gap-3 mb-4">
-            <button id="toggleKeyBtn" onclick="toggleApiKey()" class="text-[#f5f5dc] text-sm hover:underline">显示 Key</button>
-            <button onclick="regenerateApiKey()" class="text-[#f5f5dc] text-sm hover:underline">重新生成</button>
+            <button id="toggleKeyBtn" onclick="toggleApiKey()" class="text-[#1c1b18] text-sm hover:underline">显示 Key</button>
+            <button onclick="regenerateApiKey()" class="text-[#1c1b18] text-sm hover:underline">重新生成</button>
           </div>
-          <div id="copyFeedback" class="text-[#7a6f5d] text-xs mb-2"></div>
-          <button onclick="copyApiKey()" class="text-[#a0937d] text-sm hover:text-[#f5f5dc]">📋 复制 Key</button>
+          <div id="copyFeedback" class="text-[#747474] text-xs mb-2"></div>
+          <button onclick="copyApiKey()" class="text-[#4f4f4f] text-sm hover:text-[#1c1b18]">复制 Key</button>
           <input type="hidden" id="apiKeyValue" value="${apiKey}" />
         </div>
 
         <!-- API Usage Stats -->
-        <div class="bg-[#1a1410] border border-[#3d2f1f] rounded-2xl p-6">
-          <h2 class="text-[#f5f5dc] font-bold mb-4">使用统计</h2>
+        <div class="bg-[#ffffff] border border-[#25221c] rounded-lg p-6">
+          <h2 class="text-[#1c1b18] font-bold mb-4">使用统计</h2>
           <div id="apiKeyStats" class="space-y-2">
             <div class="flex justify-between items-center">
-              <span class="text-[#a0937d] text-sm">今日调用</span>
-              <span id="todayCalls" class="text-[#f5f5dc] text-sm">-</span>
+              <span class="text-[#4f4f4f] text-sm">今日调用</span>
+              <span id="todayCalls" class="text-[#1c1b18] text-sm">-</span>
             </div>
             <div class="flex justify-between items-center">
-              <span class="text-[#a0937d] text-sm">今日消费</span>
-              <span id="todayCost" class="text-[#f5f5dc] text-sm">-</span>
+              <span class="text-[#4f4f4f] text-sm">今日消费</span>
+              <span id="todayCost" class="text-[#1c1b18] text-sm">-</span>
             </div>
             <div class="flex justify-between items-center">
-              <span class="text-[#a0937d] text-sm">最近使用</span>
-              <span id="lastUsed" class="text-[#f5f5dc] text-sm">-</span>
+              <span class="text-[#4f4f4f] text-sm">最近使用</span>
+              <span id="lastUsed" class="text-[#1c1b18] text-sm">-</span>
             </div>
           </div>
         </div>
 
         <!-- Quick Actions -->
-        <div class="bg-[#1a1410] border border-[#3d2f1f] rounded-2xl p-6">
-          <h2 class="text-[#f5f5dc] font-bold mb-4">快捷操作</h2>
+        <div class="bg-[#ffffff] border border-[#25221c] rounded-lg p-6">
+          <h2 class="text-[#1c1b18] font-bold mb-4">快捷操作</h2>
           <div class="space-y-3">
-            <a href="/order/select" class="flex items-center gap-3 text-[#a0937d] hover:text-[#f5f5dc]">
-              <span>💰</span> ${subscription ? '升级套餐' : '开通套餐'}
+            <a href="/order/select" class="flex items-center gap-3 text-[#4f4f4f] hover:text-[#1c1b18]">
+              <span>-</span> ${subscription ? '升级套餐' : '开通套餐'}
             </a>
-            <a href="/orders" class="flex items-center gap-3 text-[#a0937d] hover:text-[#f5f5dc]">
-              <span>📝</span> 订单历史
+            <a href="/orders" class="flex items-center gap-3 text-[#4f4f4f] hover:text-[#1c1b18]">
+              <span>-</span> 订单历史
             </a>
-            <a href="#" class="flex items-center gap-3 text-[#a0937d] hover:text-[#f5f5dc]">
-              <span>📊</span> 使用统计
+            <a href="#" class="flex items-center gap-3 text-[#4f4f4f] hover:text-[#1c1b18]">
+              <span>-</span> 使用统计
             </a>
-            <a href="/logout" onclick="return confirm('确定要退出登录吗？')" class="flex items-center gap-3 text-[#a0937d] hover:text-[#f5f5dc]">
-              <span>🚪</span> 退出登录
+            <a href="/logout" onclick="return confirm('确定要退出登录吗？')" class="flex items-center gap-3 text-[#4f4f4f] hover:text-[#1c1b18]">
+              <span>-</span> 退出登录
             </a>
           </div>
         </div>
 
         <!-- AI Preferences -->
-        <div class="bg-[#1a1410] border border-[#3d2f1f] rounded-2xl p-6">
-          <h2 class="text-[#f5f5dc] font-bold mb-4">AI 偏好设置</h2>
+        <div class="bg-[#ffffff] border border-[#25221c] rounded-lg p-6">
+          <h2 class="text-[#1c1b18] font-bold mb-4">AI 偏好设置</h2>
           <div class="space-y-4">
             <div>
-              <label class="text-[#a0937d] text-sm block mb-2">模型等级</label>
-              <select id="preferredTier" onchange="updatePreferences()" class="w-full bg-black border border-[#3d2f1f] rounded-lg px-4 py-2 text-[#f5f5dc] focus:border-[#f5f5dc] outline-none">
+              <label class="text-[#4f4f4f] text-sm block mb-2">模型等级</label>
+              <select id="preferredTier" onchange="updatePreferences()" class="w-full bg-[#f4f4f0] border border-[#25221c] rounded-lg px-4 py-2 text-[#1c1b18] focus:border-[#1c1b18] outline-none">
                 <option value="🌕">🌕 高级模型 — GPT-4o、Claude 4、Gemini 2.0｜效果最佳，成本较高</option>
                 <option value="🌓">🌓 均衡模型 — Kimi、Qwen Turbo、MiniMax｜性价比之选</option>
-                <option value="🌑">🌑 轻量模型 — GPT-4o Mini、Qwen Long、DeepSeek V4 Flash｜响应快、成本低</option>
+                <option value="🌒">🌒 轻量模型 — GPT-4o Mini、Qwen Long、DeepSeek V4 Flash｜响应快、成本低</option>
               </select>
-              <p class="text-[#5a4d3d] text-xs mt-1">选择 AI 模型的性能等级，系统会优先使用该等级中成本最低的模型</p>
+              <p class="text-[#9a9a9a] text-xs mt-1">选择 AI 模型的性能等级，系统会优先使用该等级中成本最低的模型</p>
             </div>
             <div>
-              <label class="text-[#a0937d] text-sm block mb-2">指定模型（可选）</label>
-              <select id="preferredProvider" onchange="updatePreferences()" class="w-full bg-black border border-[#3d2f1f] rounded-lg px-4 py-2 text-[#f5f5dc] focus:border-[#f5f5dc] outline-none">
+              <label class="text-[#4f4f4f] text-sm block mb-2">指定模型（可选）</label>
+              <select id="preferredProvider" onchange="updatePreferences()" class="w-full bg-[#f4f4f0] border border-[#25221c] rounded-lg px-4 py-2 text-[#1c1b18] focus:border-[#1c1b18] outline-none">
                 <optgroup label="🌕 高级模型">
                   <option value="">自动选择（推荐）</option>
                 <option value="openai">OpenAI GPT-4o</option>
@@ -1409,30 +1401,30 @@ function dashboardPage(
                   <option value="minimax">MiniMax ABAB 6.5S</option>
                   <option value="qwen">Qwen Turbo</option>
                 </optgroup>
-                <optgroup label="🌑 轻量模型">
+                <optgroup label="🌒 轻量模型">
                   <option value="openai-mini">GPT-4o Mini (Search)</option>
                   <option value="qwen-long">Qwen Long</option>
                 </optgroup>
               </select>
-              <p class="text-[#5a4d3d] text-xs mt-1">指定后系统会优先使用该模型，否则自动选择同等级中成本最低的模型</p>
+              <p class="text-[#9a9a9a] text-xs mt-1">指定后系统会优先使用该模型，否则自动选择同等级中成本最低的模型</p>
             </div>
-            <div class="bg-[#1a1a1a] border border-[#3d2f1f] rounded-lg p-3">
+            <div class="bg-[#1a1a1a] border border-[#25221c] rounded-lg p-3">
               <div class="flex items-center gap-2">
-                <input type="checkbox" id="usePersonalApiKey" onchange="togglePersonalApiKey(); updatePreferences()" class="w-4 h-4 rounded border-[#3d2f1f] bg-black checked:bg-[#f5f5dc]" />
-                <label for="usePersonalApiKey" class="text-[#a0937d] text-sm">使用自己的 API Key</label>
+                <input type="checkbox" id="usePersonalApiKey" onchange="togglePersonalApiKey(); updatePreferences()" class="w-4 h-4 rounded border-[#25221c] bg-[#f4f4f0] checked:bg-[#1c1b18]" />
+                <label for="usePersonalApiKey" class="text-[#4f4f4f] text-sm">使用自己的 API Key</label>
               </div>
-              <p class="text-[#5a4d3d] text-xs mt-2">开启后，你的请求将使用自己的 API Key 直接调用对应服务商，不再通过平台中转。</p>
+              <p class="text-[#9a9a9a] text-xs mt-2">开启后，你的请求将使用自己的 API Key 直接调用对应服务商，不再通过平台中转。</p>
               <div id="personalApiKeySection" class="hidden mt-3">
-                <label class="text-[#a0937d] text-sm block mb-2">第三方 API Key</label>
-                <input type="password" id="personalApiKey" placeholder="输入你的 API Key" onchange="updatePreferences()" class="w-full bg-black border border-[#3d2f1f] rounded-lg px-4 py-2 text-[#f5f5dc] placeholder-[#5a4d3d] focus:border-[#f5f5dc] outline-none" />
+                <label class="text-[#4f4f4f] text-sm block mb-2">第三方 API Key</label>
+                <input type="password" id="personalApiKey" placeholder="输入你的 API Key" onchange="updatePreferences()" class="w-full bg-[#f4f4f0] border border-[#25221c] rounded-lg px-4 py-2 text-[#1c1b18] placeholder-[#9a9a9a] focus:border-[#1c1b18] outline-none" />
                 <div class="flex items-start gap-2 mt-2 text-[#8b7355] text-xs">
-                  <span>⚠️</span>
+                  <span></span>
                   <span>你的 API Key 仅存储在本地浏览器中，不会传至平台服务器。请确保 Key 安全，不要与他人分享。</span>
                 </div>
               </div>
             </div>
           </div>
-          <div id="prefStatus" class="text-[#7a6f5d] text-xs mt-3"></div>
+          <div id="prefStatus" class="text-[#747474] text-xs mt-3"></div>
         </div>
       </div>
     </main>
@@ -1459,7 +1451,7 @@ function dashboardPage(
 
       function copyApiKey() {
         navigator.clipboard.writeText(fullKey).then(() => {
-          document.getElementById('copyFeedback').textContent = '✅ 已复制';
+          document.getElementById('copyFeedback').textContent = '已复制';
           setTimeout(() => {
             document.getElementById('copyFeedback').textContent = '';
           }, 2000);
@@ -1476,7 +1468,7 @@ function dashboardPage(
             document.getElementById('apiKeyDisplay').textContent = '••••••••••••••••';
             keyVisible = false;
             document.getElementById('toggleKeyBtn').textContent = '显示 Key';
-            document.getElementById('copyFeedback').textContent = '✅ 新 Key 已生成';
+            document.getElementById('copyFeedback').textContent = '新 Key 已生成';
           }
         } catch (e) {
           alert('重新生成失败');
@@ -1536,13 +1528,13 @@ function dashboardPage(
           const data = await res.json();
           const statusEl = document.getElementById('prefStatus');
           if (data.success) {
-            statusEl.textContent = '✅ 设置已保存';
+            statusEl.textContent = '设置已保存';
           } else {
-            statusEl.textContent = '❌ 保存失败';
+            statusEl.textContent = '保存失败';
           }
           setTimeout(() => { statusEl.textContent = ''; }, 2000);
         } catch (e) {
-          document.getElementById('prefStatus').textContent = '❌ 保存失败';
+          document.getElementById('prefStatus').textContent = '保存失败';
         }
       }
 
@@ -1797,20 +1789,20 @@ function docsPage() {
 
     <main class="max-w-5xl mx-auto px-4 py-12">
       <div class="mb-12">
-        <h1 class="text-3xl font-bold text-[#f5f5dc] mb-2">API 文档 📚</h1>
-        <p class="text-[#a0937d]">了解 MOON API 的使用方法</p>
+        <h1 class="text-3xl font-bold text-[#1c1b18] mb-2">API 文档</h1>
+        <p class="text-[#4f4f4f]">了解 MOON API 的使用方法</p>
       </div>
 
       <!-- Auth Section -->
       <section class="mb-12">
-        <h2 class="text-xl font-bold text-[#f5f5dc] mb-4 flex items-center gap-2">
-          <span class="text-2xl">🔐</span> 认证方式
+        <h2 class="text-xl font-bold text-[#1c1b18] mb-4 flex items-center gap-2">
+          认证方式
         </h2>
-        <div class="bg-[#1a1410] border border-[#3d2f1f] rounded-2xl p-6">
-          <p class="text-[#a0937d] mb-4">所有 API 请求都需要通过 Cookie 认证。登录后会自动获得 session cookie。</p>
-          <div class="bg-black border border-[#3d2f1f] rounded-lg p-4">
-            <p class="text-[#7a6f5d] text-xs mb-2">请求示例</p>
-            <pre class="text-[#f5f5dc] text-sm overflow-x-auto"><code>curl -X POST https://your-domain.com/api/ai/chat \\
+        <div class="bg-[#ffffff] border border-[#25221c] rounded-lg p-6">
+          <p class="text-[#4f4f4f] mb-4">所有 API 请求都需要通过 Cookie 认证。登录后会自动获得 session cookie。</p>
+          <div class="bg-[#f4f4f0] border border-[#25221c] rounded-lg p-4">
+            <p class="text-[#747474] text-xs mb-2">请求示例</p>
+            <pre class="text-[#1c1b18] text-sm overflow-x-auto"><code>curl -X POST https://your-domain.com/api/ai/chat \\
   -H "Content-Type: application/json" \\
   -b "session=your-session-token" \\
   -d '{"messages": [{"role": "user", "content": "Hello"}]}'</code></pre>
@@ -1820,78 +1812,78 @@ function docsPage() {
 
       <!-- Models Section -->
       <section class="mb-12">
-        <h2 class="text-xl font-bold text-[#f5f5dc] mb-4 flex items-center gap-2">
-          <span class="text-2xl">🤖</span> 支持的模型
+        <h2 class="text-xl font-bold text-[#1c1b18] mb-4 flex items-center gap-2">
+          支持的模型
         </h2>
         <div class="space-y-4">
-          <div class="bg-[#1a1410] border border-[#3d2f1f] rounded-2xl p-6">
+          <div class="bg-[#ffffff] border border-[#25221c] rounded-lg p-6">
             <div class="flex items-center gap-3 mb-4">
               <span class="text-2xl">🌕</span>
-              <h3 class="text-[#f5f5dc] font-bold">Full Moon - 高级模型</h3>
+              <h3 class="text-[#1c1b18] font-bold">Full Moon - 高级模型</h3>
             </div>
             <div class="grid md:grid-cols-3 gap-4">
-              <div class="bg-black border border-[#3d2f1f] rounded-lg p-4">
-                <div class="text-[#f5f5dc] font-medium mb-1">GPT-4o</div>
-                <div class="text-[#7a6f5d] text-xs">OpenAI · 128K ctx</div>
-                <div class="text-[#a0937d] text-xs mt-2">¥5/1M in · ¥15/1M out</div>
+              <div class="bg-[#f4f4f0] border border-[#25221c] rounded-lg p-4">
+                <div class="text-[#1c1b18] font-medium mb-1">GPT-4o</div>
+                <div class="text-[#747474] text-xs">OpenAI · 128K ctx</div>
+                <div class="text-[#4f4f4f] text-xs mt-2">¥5/1M in · ¥15/1M out</div>
               </div>
-              <div class="bg-black border border-[#3d2f1f] rounded-lg p-4">
-                <div class="text-[#f5f5dc] font-medium mb-1">Claude Sonnet 4</div>
-                <div class="text-[#7a6f5d] text-xs">Anthropic · 200K ctx</div>
-                <div class="text-[#a0937d] text-xs mt-2">¥3/1M in · ¥15/1M out</div>
+              <div class="bg-[#f4f4f0] border border-[#25221c] rounded-lg p-4">
+                <div class="text-[#1c1b18] font-medium mb-1">Claude Sonnet 4</div>
+                <div class="text-[#747474] text-xs">Anthropic · 200K ctx</div>
+                <div class="text-[#4f4f4f] text-xs mt-2">¥3/1M in · ¥15/1M out</div>
               </div>
-              <div class="bg-black border border-[#3d2f1f] rounded-lg p-4">
-                <div class="text-[#f5f5dc] font-medium mb-1">Gemini 2.0 Flash</div>
-                <div class="text-[#7a6f5d] text-xs">Google · 1M ctx</div>
-                <div class="text-[#a0937d] text-xs mt-2">免费</div>
+              <div class="bg-[#f4f4f0] border border-[#25221c] rounded-lg p-4">
+                <div class="text-[#1c1b18] font-medium mb-1">Gemini 2.0 Flash</div>
+                <div class="text-[#747474] text-xs">Google · 1M ctx</div>
+                <div class="text-[#4f4f4f] text-xs mt-2">免费</div>
               </div>
             </div>
           </div>
 
-          <div class="bg-[#1a1410] border border-[#3d2f1f] rounded-2xl p-6">
+          <div class="bg-[#ffffff] border border-[#25221c] rounded-lg p-6">
             <div class="flex items-center gap-3 mb-4">
               <span class="text-2xl">🌓</span>
-              <h3 class="text-[#f5f5dc] font-bold">Half Moon - 高效模型</h3>
+              <h3 class="text-[#1c1b18] font-bold">Half Moon - 高效模型</h3>
             </div>
             <div class="grid md:grid-cols-3 gap-4">
-              <div class="bg-black border border-[#3d2f1f] rounded-lg p-4">
-                <div class="text-[#f5f5dc] font-medium mb-1">Kimi Core</div>
-                <div class="text-[#7a6f5d] text-xs">月之暗面 · 128K ctx</div>
-                <div class="text-[#a0937d] text-xs mt-2">¥12/1M</div>
+              <div class="bg-[#f4f4f0] border border-[#25221c] rounded-lg p-4">
+                <div class="text-[#1c1b18] font-medium mb-1">Kimi Core</div>
+                <div class="text-[#747474] text-xs">月之暗面 · 128K ctx</div>
+                <div class="text-[#4f4f4f] text-xs mt-2">¥12/1M</div>
               </div>
-              <div class="bg-black border border-[#3d2f1f] rounded-lg p-4">
-                <div class="text-[#f5f5dc] font-medium mb-1">MiniMax ABAB 6.5S</div>
-                <div class="text-[#7a6f5d] text-xs">MiniMax · 245K ctx</div>
-                <div class="text-[#a0937d] text-xs mt-2">¥1/1M</div>
+              <div class="bg-[#f4f4f0] border border-[#25221c] rounded-lg p-4">
+                <div class="text-[#1c1b18] font-medium mb-1">MiniMax ABAB 6.5S</div>
+                <div class="text-[#747474] text-xs">MiniMax · 245K ctx</div>
+                <div class="text-[#4f4f4f] text-xs mt-2">¥1/1M</div>
               </div>
-              <div class="bg-black border border-[#3d2f1f] rounded-lg p-4">
-                <div class="text-[#f5f5dc] font-medium mb-1">Qwen Turbo</div>
-                <div class="text-[#7a6f5d] text-xs">阿里 · 131K ctx</div>
-                <div class="text-[#a0937d] text-xs mt-2">¥0.8/1M in · ¥2/1M out</div>
+              <div class="bg-[#f4f4f0] border border-[#25221c] rounded-lg p-4">
+                <div class="text-[#1c1b18] font-medium mb-1">Qwen Turbo</div>
+                <div class="text-[#747474] text-xs">阿里 · 131K ctx</div>
+                <div class="text-[#4f4f4f] text-xs mt-2">¥0.8/1M in · ¥2/1M out</div>
               </div>
             </div>
           </div>
 
-          <div class="bg-[#1a1410] border border-[#3d2f1f] rounded-2xl p-6">
+          <div class="bg-[#ffffff] border border-[#25221c] rounded-lg p-6">
             <div class="flex items-center gap-3 mb-4">
-              <span class="text-2xl">🌑</span>
-              <h3 class="text-[#f5f5dc] font-bold">New Moon - 轻量模型</h3>
+              <span class="text-2xl">🌒</span>
+              <h3 class="text-[#1c1b18] font-bold">New Moon - 轻量模型</h3>
             </div>
             <div class="grid md:grid-cols-3 gap-4">
-              <div class="bg-black border border-[#3d2f1f] rounded-lg p-4">
-                <div class="text-[#f5f5dc] font-medium mb-1">GPT-4o Mini (Search)</div>
-                <div class="text-[#7a6f5d] text-xs">OpenAI · 128K ctx</div>
-                <div class="text-[#a0937d] text-xs mt-2">¥0.375/1M in · ¥1.5/1M out</div>
+              <div class="bg-[#f4f4f0] border border-[#25221c] rounded-lg p-4">
+                <div class="text-[#1c1b18] font-medium mb-1">GPT-4o Mini (Search)</div>
+                <div class="text-[#747474] text-xs">OpenAI · 128K ctx</div>
+                <div class="text-[#4f4f4f] text-xs mt-2">¥0.375/1M in · ¥1.5/1M out</div>
               </div>
-              <div class="bg-black border border-[#3d2f1f] rounded-lg p-4">
-                <div class="text-[#f5f5dc] font-medium mb-1">Qwen Long</div>
-                <div class="text-[#7a6f5d] text-xs">阿里 · 1M ctx</div>
-                <div class="text-[#a0937d] text-xs mt-2">¥0.8/1M in · ¥2/1M out</div>
+              <div class="bg-[#f4f4f0] border border-[#25221c] rounded-lg p-4">
+                <div class="text-[#1c1b18] font-medium mb-1">Qwen Long</div>
+                <div class="text-[#747474] text-xs">阿里 · 1M ctx</div>
+                <div class="text-[#4f4f4f] text-xs mt-2">¥0.8/1M in · ¥2/1M out</div>
               </div>
-              <div class="bg-black border border-[#3d2f1f] rounded-lg p-4">
-                <div class="text-[#f5f5dc] font-medium mb-1">DeepSeek V4 Flash</div>
-                <div class="text-[#7a6f5d] text-xs">DeepSeek · 1M ctx</div>
-                <div class="text-[#a0937d] text-xs mt-2">¥0.14/1M in · ¥0.28/1M out</div>
+              <div class="bg-[#f4f4f0] border border-[#25221c] rounded-lg p-4">
+                <div class="text-[#1c1b18] font-medium mb-1">DeepSeek V4 Flash</div>
+                <div class="text-[#747474] text-xs">DeepSeek · 1M ctx</div>
+                <div class="text-[#4f4f4f] text-xs mt-2">¥0.14/1M in · ¥0.28/1M out</div>
               </div>
             </div>
           </div>
@@ -1900,31 +1892,31 @@ function docsPage() {
 
       <!-- Endpoints Section -->
       <section class="mb-12">
-        <h2 class="text-xl font-bold text-[#f5f5dc] mb-4 flex items-center gap-2">
-          <span class="text-2xl">📡</span> API 端点
+        <h2 class="text-xl font-bold text-[#1c1b18] mb-4 flex items-center gap-2">
+          API 端点
         </h2>
         <div class="space-y-4">
-          <div class="bg-[#1a1410] border border-[#3d2f1f] rounded-2xl p-6">
+          <div class="bg-[#ffffff] border border-[#25221c] rounded-lg p-6">
             <div class="flex items-center gap-3 mb-3">
               <span class="bg-green-900/30 text-green-200 px-2 py-1 rounded text-xs font-bold">POST</span>
-              <span class="text-[#f5f5dc] font-mono">/api/ai/chat</span>
+              <span class="text-[#1c1b18] font-mono">/api/ai/chat</span>
             </div>
-            <p class="text-[#a0937d] text-sm mb-4">发送消息并获取 AI 回复，支持自动路由或指定模型</p>
-            <div class="bg-black border border-[#3d2f1f] rounded-lg p-4">
-              <p class="text-[#7a6f5d] text-xs mb-2">请求体</p>
-              <pre class="text-[#f5f5dc] text-sm overflow-x-auto"><code>{
+            <p class="text-[#4f4f4f] text-sm mb-4">发送消息并获取 AI 回复，支持自动路由或指定模型</p>
+            <div class="bg-[#f4f4f0] border border-[#25221c] rounded-lg p-4">
+              <p class="text-[#747474] text-xs mb-2">请求体</p>
+              <pre class="text-[#1c1b18] text-sm overflow-x-auto"><code>{
   "messages": [
     {"role": "system", "content": "你是一个有帮助的助手"},
     {"role": "user", "content": "你好"}
   ],
-  "tier": "🌕",       // 可选：🌕 🌓 🌑
+  "tier": "🌕",       // 可选：🌕 🌓 🌒
   "model": "gpt-4o",  // 可选：直接指定模型
   "temperature": 0.7  // 可选：0-2
 }</code></pre>
             </div>
-            <div class="bg-black border border-[#3d2f1f] rounded-lg p-4 mt-3">
-              <p class="text-[#7a6f5d] text-xs mb-2">响应示例</p>
-              <pre class="text-[#f5f5dc] text-sm overflow-x-auto"><code>{
+            <div class="bg-[#f4f4f0] border border-[#25221c] rounded-lg p-4 mt-3">
+              <p class="text-[#747474] text-xs mb-2">响应示例</p>
+              <pre class="text-[#1c1b18] text-sm overflow-x-auto"><code>{
   "content": "你好！有什么可以帮助你的吗？",
   "model": "gpt-4o",
   "provider": "openai",
@@ -1938,77 +1930,77 @@ function docsPage() {
             </div>
           </div>
 
-          <div class="bg-[#1a1410] border border-[#3d2f1f] rounded-2xl p-6">
+          <div class="bg-[#ffffff] border border-[#25221c] rounded-lg p-6">
             <div class="flex items-center gap-3 mb-3">
               <span class="bg-blue-900/30 text-blue-200 px-2 py-1 rounded text-xs font-bold">GET</span>
-              <span class="text-[#f5f5dc] font-mono">/api/ai/models</span>
+              <span class="text-[#1c1b18] font-mono">/api/ai/models</span>
             </div>
-            <p class="text-[#a0937d] text-sm mb-4">获取所有可用的 AI 模型列表</p>
+            <p class="text-[#4f4f4f] text-sm mb-4">获取所有可用的 AI 模型列表</p>
           </div>
 
-          <div class="bg-[#1a1410] border border-[#3d2f1f] rounded-2xl p-6">
+          <div class="bg-[#ffffff] border border-[#25221c] rounded-lg p-6">
             <div class="flex items-center gap-3 mb-3">
               <span class="bg-blue-900/30 text-blue-200 px-2 py-1 rounded text-xs font-bold">GET</span>
-              <span class="text-[#f5f5dc] font-mono">/api/ai/usage</span>
+              <span class="text-[#1c1b18] font-mono">/api/ai/usage</span>
             </div>
-            <p class="text-[#a0937d] text-sm mb-4">获取当前用户的 API 使用量和配额</p>
+            <p class="text-[#4f4f4f] text-sm mb-4">获取当前用户的 API 使用量和配额</p>
           </div>
 
-          <div class="bg-[#1a1410] border border-[#3d2f1f] rounded-2xl p-6">
+          <div class="bg-[#ffffff] border border-[#25221c] rounded-lg p-6">
             <div class="flex items-center gap-3 mb-3">
               <span class="bg-blue-900/30 text-blue-200 px-2 py-1 rounded text-xs font-bold">GET</span>
-              <span class="text-[#f5f5dc] font-mono">/api/plans</span>
+              <span class="text-[#1c1b18] font-mono">/api/plans</span>
             </div>
-            <p class="text-[#a0937d] text-sm mb-4">获取所有可用套餐信息</p>
+            <p class="text-[#4f4f4f] text-sm mb-4">获取所有可用套餐信息</p>
           </div>
         </div>
       </section>
 
       <!-- Pricing Section -->
       <section class="mb-12">
-        <h2 class="text-xl font-bold text-[#f5f5dc] mb-4 flex items-center gap-2">
-          <span class="text-2xl">💰</span> 价格说明
+        <h2 class="text-xl font-bold text-[#1c1b18] mb-4 flex items-center gap-2">
+          价格说明
         </h2>
-        <div class="bg-[#1a1410] border border-[#3d2f1f] rounded-2xl p-6">
+        <div class="bg-[#ffffff] border border-[#25221c] rounded-lg p-6">
           <div class="grid md:grid-cols-3 gap-6">
             <div class="text-center">
               <div class="text-3xl mb-2">🌕</div>
-              <div class="text-[#f5f5dc] font-bold mb-1">入门套餐</div>
-              <div class="text-[#f5f5dc] text-2xl font-bold mb-2">¥9.9</div>
-              <div class="text-[#a0937d] text-sm">30次/天</div>
-              <div class="text-[#7a6f5d] text-xs mt-1">高级模型额度</div>
+              <div class="text-[#1c1b18] font-bold mb-1">入门套餐</div>
+              <div class="text-[#1c1b18] text-2xl font-bold mb-2">¥9.9</div>
+              <div class="text-[#4f4f4f] text-sm">30次/天</div>
+              <div class="text-[#747474] text-xs mt-1">高级模型额度</div>
             </div>
             <div class="text-center">
               <div class="text-3xl mb-2">🌓</div>
-              <div class="text-[#f5f5dc] font-bold mb-1">普通套餐</div>
-              <div class="text-[#f5f5dc] text-2xl font-bold mb-2">¥39</div>
-              <div class="text-[#a0937d] text-sm">200次/天</div>
-              <div class="text-[#7a6f5d] text-xs mt-1">高级模型额度</div>
+              <div class="text-[#1c1b18] font-bold mb-1">普通套餐</div>
+              <div class="text-[#1c1b18] text-2xl font-bold mb-2">¥39</div>
+              <div class="text-[#4f4f4f] text-sm">200次/天</div>
+              <div class="text-[#747474] text-xs mt-1">高级模型额度</div>
             </div>
             <div class="text-center">
-              <div class="text-3xl mb-2">🌑</div>
-              <div class="text-[#f5f5dc] font-bold mb-1">高级套餐</div>
-              <div class="text-[#f5f5dc] text-2xl font-bold mb-2">¥99</div>
-              <div class="text-[#a0937d] text-sm">1000次/天</div>
-              <div class="text-[#7a6f5d] text-xs mt-1">高级模型额度</div>
+              <div class="text-3xl mb-2">🌒</div>
+              <div class="text-[#1c1b18] font-bold mb-1">高级套餐</div>
+              <div class="text-[#1c1b18] text-2xl font-bold mb-2">¥99</div>
+              <div class="text-[#4f4f4f] text-sm">1000次/天</div>
+              <div class="text-[#747474] text-xs mt-1">高级模型额度</div>
             </div>
           </div>
-          <div class="mt-6 pt-6 border-t border-[#3d2f1f] text-center">
-            <p class="text-[#a0937d] text-sm">🌑 轻量模型不限量使用</p>
-            <p class="text-[#7a6f5d] text-xs mt-1">超额后自动降级到低层级模型</p>
+          <div class="mt-6 pt-6 border-t border-[#25221c] text-center">
+            <p class="text-[#4f4f4f] text-sm">🌒 轻量模型不限量使用</p>
+            <p class="text-[#747474] text-xs mt-1">超额后自动降级到低层级模型</p>
           </div>
         </div>
       </section>
 
       <!-- SDK Section -->
       <section class="mb-12">
-        <h2 class="text-xl font-bold text-[#f5f5dc] mb-4 flex items-center gap-2">
-          <span class="text-2xl">📦</span> SDK 示例
+        <h2 class="text-xl font-bold text-[#1c1b18] mb-4 flex items-center gap-2">
+          SDK 示例
         </h2>
-        <div class="bg-[#1a1410] border border-[#3d2f1f] rounded-2xl p-6">
-          <h3 class="text-[#f5f5dc] font-medium mb-4">JavaScript / Node.js</h3>
-          <div class="bg-black border border-[#3d2f1f] rounded-lg p-4">
-            <pre class="text-[#f5f5dc] text-sm overflow-x-auto"><code>const response = await fetch('/api/ai/chat', {
+        <div class="bg-[#ffffff] border border-[#25221c] rounded-lg p-6">
+          <h3 class="text-[#1c1b18] font-medium mb-4">JavaScript / Node.js</h3>
+          <div class="bg-[#f4f4f0] border border-[#25221c] rounded-lg p-4">
+            <pre class="text-[#1c1b18] text-sm overflow-x-auto"><code>const response = await fetch('/api/ai/chat', {
   method: 'POST',
   headers: { 'Content-Type': 'application/json' },
   credentials: 'include',  // 携带 cookie
@@ -2042,7 +2034,7 @@ app.get("/api/plans", (c) => c.json(plans));
 
 app.get("/api/moon", (c) =>
   c.json({
-    routing: ["🌕", "🌓", "🌑"],
+    routing: ["🌕", "🌓", "🌒"],
     tiers: modelTiers,
   }),
 );
@@ -2146,9 +2138,11 @@ app.get("/order/success", async (c) => {
   }
 
   // Send activation email
-  sendSubscriptionActivationEmail(order.email, order.plan, order.billing_cycle, expiresAtStr).catch(err => {
-    console.error('Failed to send activation email:', err);
-  });
+  if (order.email) {
+    sendSubscriptionActivationEmail(order.email, order.plan, order.billing_cycle, expiresAtStr).catch(err => {
+      console.error('Failed to send activation email:', err);
+    });
+  }
 
   return c.html(orderSuccessPage(outTradeNo, order.plan, order.billing_cycle));
 });
@@ -2305,7 +2299,7 @@ app.post("/api/ai/chat", async (c) => {
     const body = await c.req.json();
     const { messages, tier, model } = body as {
       messages: AIRequest['messages'];
-      tier?: '🌕' | '🌓' | '🌑';
+      tier?: '🌕' | '🌓' | '🌒';
       model?: string;
     };
 
@@ -2326,7 +2320,7 @@ app.post("/api/ai/chat", async (c) => {
 
     // Determine which model to use - respect user preferences
     let selectedModel: string;
-    let selectedTier: '🌕' | '🌓' | '🌑';
+    let selectedTier: '🌕' | '🌓' | '🌒';
 
     if (model && MODEL_CONFIGS[model]) {
       selectedModel = model;
@@ -2334,11 +2328,11 @@ app.post("/api/ai/chat", async (c) => {
     } else if (userPrefs?.preferred_model && MODEL_CONFIGS[userPrefs.preferred_model]) {
       selectedModel = userPrefs.preferred_model;
       selectedTier = MODEL_CONFIGS[selectedModel].tier;
-    } else if (tier && ['🌕', '🌓', '🌑'].includes(tier)) {
+    } else if (tier && ['🌕', '🌓', '🌒'].includes(tier)) {
       selectedTier = tier;
       selectedModel = DEFAULT_MODELS[tier];
-    } else if (userPrefs?.preferred_tier && ['🌕', '🌓', '🌑'].includes(userPrefs.preferred_tier)) {
-      selectedTier = userPrefs.preferred_tier;
+    } else if (userPrefs?.preferred_tier && ['🌕', '🌓', '🌒'].includes(userPrefs.preferred_tier)) {
+      selectedTier = userPrefs.preferred_tier as '🌕' | '🌓' | '🌒';
       selectedModel = DEFAULT_MODELS[selectedTier];
     } else {
       // Default to full moon tier
@@ -2349,7 +2343,7 @@ app.post("/api/ai/chat", async (c) => {
     // Check user quota for selected tier
     if (!hasQuota(user.id, selectedTier)) {
       // Try to fallback to lower tiers
-      const fallbackTiers: Array<'🌕' | '🌓' | '🌑'> = ['🌕', '🌓', '🌑'];
+      const fallbackTiers: Array<'🌕' | '🌓' | '🌒'> = ['🌕', '🌓', '🌒'];
       const currentIdx = fallbackTiers.indexOf(selectedTier);
       let usedFallback = false;
 
@@ -2440,7 +2434,7 @@ app.post("/api/ai/chat", async (c) => {
 
 // List available AI models
 app.get("/api/ai/models", (c) => {
-  const tiers = ['🌕', '🌓', '🌑'] as const;
+  const tiers = ['🌕', '🌓', '🌒'] as const;
   const result = tiers.map(tier => ({
     tier,
     models: getModelsForTier(tier).map(m => ({
@@ -2517,14 +2511,14 @@ app.put("/api/ai/preferences", async (c) => {
     } = body as {
       preferredProvider?: string;
       preferredModel?: string;
-      preferredTier?: '🌕' | '🌓' | '🌑';
+      preferredTier?: '🌕' | '🌓' | '🌒';
       usePersonalApiKey?: boolean;
       personalApiKey?: string;
     };
 
     // Validate tier
-    if (preferredTier && !['🌕', '🌓', '🌑'].includes(preferredTier)) {
-      return c.json({ error: "Invalid tier. Must be 🌕, 🌓, or 🌑" }, 400);
+    if (preferredTier && !['🌕', '🌓', '🌒'].includes(preferredTier)) {
+      return c.json({ error: "Invalid tier. Must be 🌕, 🌓, or 🌒" }, 400);
     }
 
     // Validate provider
@@ -2567,7 +2561,9 @@ app.put("/api/ai/preferences", async (c) => {
       }
 
       values.push(user.id);
-      db.query(`UPDATE user_ai_preferences SET ${updates.join(", ")} WHERE user_id = ?`).run(...values);
+      db.query(`UPDATE user_ai_preferences SET ${updates.join(", ")} WHERE user_id = ?`).run(
+        ...(values as SQLQueryBindings[])
+      );
     } else {
       // Insert new
       const id = generateId();

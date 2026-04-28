@@ -121,7 +121,7 @@ export async function sendExpirationReminderEmail(params: {
         usageInfo && usageInfo.fullMoonLimit !== Infinity
           ? `
       <div class="usage-box">
-        <p><span class="highlight">📊 今日用量：</span></p>
+        <p><span class="highlight">今日用量：</span></p>
         <p>🌕 满月配额：已用 ${usageInfo.fullMoonUsed} / ${usageInfo.fullMoonLimit} (${usageInfo.usagePercent}%)</p>
         <div class="usage-bar"><div class="usage-fill" style="width: ${Math.min(usageInfo.usagePercent, 100)}%"></div></div>
       </div>
@@ -129,11 +129,11 @@ export async function sendExpirationReminderEmail(params: {
           : ''
       }
       <div class="plan-compare">
-        <p><span class="highlight">💡 套餐升级推荐：</span></p>
+        <p><span class="highlight">套餐升级推荐：</span></p>
         <ul>
           <li>🌕 <strong>高级套餐</strong> - 每月1000次满月配额，适合高强度使用</li>
           <li>🌓 <strong>普通套餐</strong> - 每月200次满月配额</li>
-          <li>🌑 <strong>入门套餐</strong> - 每月30次满月配额</li>
+          <li>🌒 <strong>入门套餐</strong> - 每月30次满月配额</li>
         </ul>
       </div>
       ${
@@ -225,7 +225,7 @@ export async function sendSubscriptionActivationEmail(
       <ul>
         <li>使用 🌕 满月高级模型（GPT-4o、Claude、Gemini）</li>
         <li>使用 🌓 半月高效模型（Kimi、MiniMax、Qwen）</li>
-        <li>无限使用 🌑 新月轻量模型</li>
+        <li>无限使用 🌒 新月轻量模型</li>
       </ul>
 
       <p style="text-align: center;">

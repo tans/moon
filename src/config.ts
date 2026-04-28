@@ -53,6 +53,13 @@ export interface AIProviderKeys {
   deepseek?: string;
 }
 
+export interface ModelSource {
+  provider: "openai" | "anthropic";
+  baseURL: string;
+  apiKey: string;
+  model: string;
+}
+
 export interface Config {
   app: AppConfig;
   aiProviders: AIProviderKeys;
@@ -98,7 +105,7 @@ function validateConfig(): void {
   }
 
   if (errors.missing.length > 0 || errors.suggestions.length > 0) {
-    console.warn("\n⚠️  Configuration Warning:");
+    console.warn("\nConfiguration Warning:");
     if (errors.missing.length > 0) {
       console.error(`   Missing required env vars: ${errors.missing.join(", ")}`);
     }

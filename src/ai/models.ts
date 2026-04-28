@@ -3,7 +3,7 @@
 export interface ModelConfig {
   name: string;
   provider: 'openai' | 'anthropic' | 'google' | 'kimi' | 'minimax' | 'qwen' | 'deepseek';
-  tier: '🌕' | '🌓' | '🌑';
+  tier: '🌕' | '🌓' | '🌒';
   inputCostPer1M: number;  // cost per 1M tokens (USD)
   outputCostPer1M: number;
   supportsSystemPrompt: boolean;
@@ -87,11 +87,11 @@ export const MODEL_CONFIGS: Record<string, ModelConfig> = {
     maxTokens: 131072,
   },
 
-  // 🌑 New Moon Tier - Lightweight models
+  // 🌒 New Moon Tier - Lightweight models
   'gpt-4o-mini-search': {
     name: 'GPT-4o Mini (Search)',
     provider: 'openai',
-    tier: '🌑',
+    tier: '🌒',
     inputCostPer1M: 0.375,
     outputCostPer1M: 1.5,
     supportsSystemPrompt: true,
@@ -100,7 +100,7 @@ export const MODEL_CONFIGS: Record<string, ModelConfig> = {
   'qwen-long': {
     name: 'Qwen Long',
     provider: 'qwen',
-    tier: '🌑',
+    tier: '🌒',
     inputCostPer1M: 0.8,
     outputCostPer1M: 2,
     supportsSystemPrompt: true,
@@ -109,7 +109,7 @@ export const MODEL_CONFIGS: Record<string, ModelConfig> = {
   'deepseek-v4-flash': {
     name: 'DeepSeek V4 Flash',
     provider: 'deepseek',
-    tier: '🌑',
+    tier: '🌒',
     inputCostPer1M: 0.14,
     outputCostPer1M: 0.28,
     supportsSystemPrompt: true,
@@ -121,10 +121,10 @@ export const MODEL_CONFIGS: Record<string, ModelConfig> = {
 export const DEFAULT_MODELS = {
   '🌕': 'gpt-4o',
   '🌓': 'kimi-core',
-  '🌑': 'gpt-4o-mini-search',
+  '🌒': 'gpt-4o-mini-search',
 };
 
 // Model to use for each tier
-export function getModelForTier(tier: '🌕' | '🌓' | '🌑'): string {
+export function getModelForTier(tier: '🌕' | '🌓' | '🌒'): string {
   return DEFAULT_MODELS[tier];
 }

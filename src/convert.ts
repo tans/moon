@@ -26,11 +26,14 @@ export function openaiToAnthropic(req: OpenAIRequest, targetModel: string): Conv
 }
 
 export function anthropicToOpenAI(req: AnthropicRequest, targetModel: string): ConvertedRequest {
+  const maybePrompt = (req as unknown as { prompt?: unknown }).prompt;
+  const prompt = typeof maybePrompt === "string" ? maybePrompt : "";
+
   return {
     provider: "openai",
     body: {
       model: targetModel,
-      messages: anthropicPromptToMessages(req.prompt || ""),
+      messages: anthropicPromptToMessages(prompt),
       stream: req.stream,
     },
   };

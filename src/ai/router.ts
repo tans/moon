@@ -36,7 +36,7 @@ export interface AIResponse {
 }
 
 export interface AIRoutingOptions {
-  preferredTier?: '🌕' | '🌓' | '🌑';
+  preferredTier?: '🌕' | '🌓' | '🌒';
   fallbackEnabled?: boolean;
   userId?: string;
   personalApiKey?: string;
@@ -364,7 +364,7 @@ export async function routeAIRequest(
     if (!fallbackEnabled) throw error;
 
     // Try fallback models in order of tier
-    const tierOrder: Array<'🌕' | '🌓' | '🌑'> = ['🌕', '🌓', '🌑'];
+    const tierOrder: Array<'🌕' | '🌓' | '🌒'> = ['🌕', '🌓', '🌒'];
     const currentTierIndex = tierOrder.indexOf(modelConfig.tier);
 
     // Try lower tiers as fallback
@@ -397,7 +397,7 @@ export async function routeAIRequest(
 }
 
 // Get available models for a tier
-export function getModelsForTier(tier: '🌕' | '🌓' | '🌑'): ModelConfig[] {
+export function getModelsForTier(tier: '🌕' | '🌓' | '🌒'): ModelConfig[] {
   return Object.values(MODEL_CONFIGS).filter(config => config.tier === tier);
 }
 
