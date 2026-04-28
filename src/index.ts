@@ -1,10 +1,16 @@
 import app from "./app";
+import { getConfig } from "./config";
+import { startExpirationReminderJob } from "./ai/reminder";
 
-const port = Number(process.env.PORT ?? 8787);
+const config = getConfig();
+const port = config.app.port;
 
 Bun.serve({
   port,
   fetch: app.fetch,
 });
+
+// Start subscription expiration reminder background job
+startExpirationReminderJob();
 
 console.log(`MOON running on http://localhost:${port}`);

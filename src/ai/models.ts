@@ -2,7 +2,7 @@
 
 export interface ModelConfig {
   name: string;
-  provider: 'openai' | 'anthropic' | 'google' | 'kimi' | 'minimax' | 'qwen';
+  provider: 'openai' | 'anthropic' | 'google' | 'kimi' | 'minimax' | 'qwen' | 'deepseek';
   tier: '🌕' | '🌓' | '🌑';
   inputCostPer1M: number;  // cost per 1M tokens (USD)
   outputCostPer1M: number;
@@ -105,6 +105,15 @@ export const MODEL_CONFIGS: Record<string, ModelConfig> = {
     outputCostPer1M: 2,
     supportsSystemPrompt: true,
     maxTokens: 1000000,
+  },
+  'deepseek-v4-flash': {
+    name: 'DeepSeek V4 Flash',
+    provider: 'deepseek',
+    tier: '🌑',
+    inputCostPer1M: 0.14,
+    outputCostPer1M: 0.28,
+    supportsSystemPrompt: true,
+    maxTokens: 384000,
   },
 };
 

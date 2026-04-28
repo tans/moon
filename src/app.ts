@@ -1,14 +1,23 @@
 import { Hono } from "hono";
+import { readFileSync } from "node:fs";
 import { db } from "./db";
 import bcrypt from "bcryptjs";
 import { routeAIRequest, getConfiguredProviders, getModelsForTier, type AIRequest } from "./ai/router";
-import { recordUsage, getUserUsageLimits, recordUsageEvent, hasQuota, getExpirationWarning, isSubscriptionExpired } from "./ai/cost";
+import { recordUsage, getUserUsageLimits, recordUsageEvent, hasQuota, getExpirationWarning, isSubscriptionExpired, isOnFreeTrial, getFreeTrialMessage, updateApiKeyLastUsed, getAllUsageStats, getQuotaWarning, type QuotaWarning } from "./ai/cost";
 import { DEFAULT_MODELS, MODEL_CONFIGS } from "./ai/models";
 import { getConfig } from "./config";
+import { sendSubscriptionActivationEmail } from "./ai/email";
 
 const config = getConfig();
 const JWT_SECRET = config.app.jwtSecret;
 const SESSION_DURATION_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
+let compiledStyles = "";
+
+try {
+  compiledStyles = readFileSync(new URL("../public/styles.css", import.meta.url), "utf-8");
+} catch {
+  compiledStyles = "";
+}
 
 function generateId(): string {
   return crypto.randomUUID().replace(/-/g, "").slice(0, 16);
@@ -40,6 +49,34 @@ async function hashPassword(password: string): Promise<string> {
 
 async function verifyPassword(password: string, hash: string): Promise<boolean> {
   return bcrypt.compare(password, hash);
+}
+
+interface PasswordStrength {
+  isValid: boolean;
+  errors: string[];
+}
+
+function checkPasswordStrength(password: string): PasswordStrength {
+  const errors: string[] = [];
+  if (password.length < 8) {
+    errors.push("至少8个字符");
+  }
+  if (!/[a-z]/.test(password)) {
+    errors.push("需包含小写字母");
+  }
+  if (!/[A-Z]/.test(password)) {
+    errors.push("需包含大写字母");
+  }
+  if (!/[0-9]/.test(password)) {
+    errors.push("需包含数字");
+  }
+  if (!/[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?]/.test(password)) {
+    errors.push("需包含特殊字符");
+  }
+  return {
+    isValid: errors.length === 0,
+    errors,
+  };
 }
 
 function base64UrlEncode(data: Uint8Array): string {
@@ -87,6 +124,7 @@ interface Order {
   id: string;
   out_trade_no: string;
   onepay_id: string | null;
+  user_id: string | null;
   plan: string;
   billing_cycle: string;
   fee: number;
@@ -262,20 +300,38 @@ function orderPage(planName: string, outTradeNo: string, fee: number, billingCyc
   `);
 }
 
-function orderSuccessPage(outTradeNo: string) {
+function orderSuccessPage(outTradeNo: string, planName: string = '', billingCycle: string = '') {
+  const cycleLabel = billingCycle === 'yearly' ? '年度' : '月度';
   return baseHtml(`
     ${navbar()}
 
     <main class="max-w-md mx-auto px-4 py-12">
       <div class="text-center mb-8">
-        <div class="text-6xl mb-4">✅</div>
-        <h1 class="text-2xl font-bold text-[#f5f5dc]">支付成功</h1>
-        <p class="text-[#a0937d] mt-2">您的订阅已激活</p>
+        <div class="text-6xl mb-4">🎉</div>
+        <h1 class="text-2xl font-bold text-[#f5f5dc]">支付成功！</h1>
+        <p class="text-[#f5f5dc] mt-2 font-medium">您的订阅已成功激活</p>
       </div>
 
       <div class="bg-[#1a1410] border border-[#3d2f1f] rounded-2xl p-6 text-center">
-        <p class="text-[#a0937d] text-sm mb-6">订单号：${outTradeNo}</p>
-        <a href="/dashboard" class="inline-block bg-[#f5f5dc] text-black px-6 py-3 rounded-full font-medium hover:bg-[#d4c4a8]">返回后台</a>
+        ${planName ? `
+        <div class="mb-6 p-4 bg-[#2d241c] rounded-xl">
+          <div class="text-[#7a6f5d] text-sm mb-1">开通套餐</div>
+          <div class="text-[#f5f5dc] text-xl font-bold">${planName} · ${cycleLabel}</div>
+        </div>
+        ` : ''}
+        <div class="space-y-2 text-left mb-6">
+          <div class="flex items-center gap-3 text-[#a0937d] text-sm">
+            <span class="text-green-400">✓</span> 订阅已激活，可立即使用
+          </div>
+          <div class="flex items-center gap-3 text-[#a0937d] text-sm">
+            <span class="text-green-400">✓</span> 额度已添加到您的账户
+          </div>
+          <div class="flex items-center gap-3 text-[#a0937d] text-sm">
+            <span class="text-green-400">✓</span> 激活通知已发送至邮箱
+          </div>
+        </div>
+        <p class="text-[#7a6f5d] text-sm mb-4">订单号：${outTradeNo}</p>
+        <a href="/dashboard" class="inline-block bg-[#f5f5dc] text-black px-8 py-3 rounded-full font-medium hover:bg-[#d4c4a8]">前往使用 →</a>
       </div>
     </main>
 
@@ -373,13 +429,28 @@ function selectPlanPage() {
         </div>
       </div>
 
+      <!-- Confirmation Modal -->
+      <div id="confirmModal" class="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 hidden flex items-center justify-center">
+        <div class="bg-[#1a1410] border border-[#3d2f1f] rounded-2xl p-8 max-w-md mx-4">
+          <h3 class="text-xl font-bold text-[#f5f5dc] mb-4">确认订单</h3>
+          <div id="confirmDetails" class="text-[#a0937d] text-sm mb-6 space-y-2"></div>
+          <div class="flex gap-4">
+            <button onclick="closeConfirmModal()" class="flex-1 border border-[#3d2f1f] text-[#f5f5dc] px-6 py-3 rounded-full font-medium hover:bg-[#2d241c]">取消</button>
+            <button id="confirmBtn" class="flex-1 bg-[#f5f5dc] text-black px-6 py-3 rounded-full font-medium hover:bg-[#d4c4a8]">确认支付</button>
+          </div>
+        </div>
+      </div>
+
       <div class="grid md:grid-cols-3 gap-6">
         ${plans.map((plan, i) => `
           <div class="bg-[#1a1410] border ${i === 1 ? 'border-[#f5f5dc] ring-1 ring-[#f5f5dc]' : 'border-[#3d2f1f]'} rounded-2xl p-8 text-center">
             ${i === 1 ? '<div class="text-[#f5f5dc] text-xs font-medium mb-2">推荐</div>' : ''}
             <h2 class="text-[#f5f5dc] text-xl font-bold mb-4">${plan.name}</h2>
             <div class="text-[#f5f5dc] text-4xl font-bold mb-1"><span id="price-${plan.name}">${plan.price}</span></div>
-            <div id="price-note-${plan.name}" class="text-[#a0937d] text-sm mb-6"></div>
+            <div id="price-note-${plan.name}" class="text-[#a0937d] text-sm mb-2"></div>
+            <div id="discount-tag-${plan.name}" class="hidden mb-4">
+              <span class="inline-block bg-green-900/40 text-green-300 px-3 py-1 rounded-full text-sm">🎉 年付7.2折起</span>
+            </div>
             <ul class="text-left text-[#a0937d] text-sm space-y-3 mb-8">
               <li class="flex items-center gap-2"><span>🌕</span> ${plan.fullMoon}</li>
               <li class="flex items-center gap-2"><span>🌓</span> ${plan.halfMoon}</li>
@@ -387,10 +458,10 @@ function selectPlanPage() {
               <li class="flex items-center gap-2"><span>✓</span> 自动路由切换</li>
               ${i === 2 ? '<li class="flex items-center gap-2"><span>✓</span> 长上下文</li><li class="flex items-center gap-2"><span>✓</span> 高优先级</li>' : ''}
             </ul>
-            <form method="POST" action="/order/create">
+            <form method="POST" action="/order/create" id="form-${plan.name}">
               <input type="hidden" name="plan" value="${plan.name}" />
               <input type="hidden" name="billing_cycle" id="billing_cycle-${plan.name}" value="monthly" />
-              <button type="submit" class="block w-full ${i === 1 ? 'bg-[#f5f5dc] text-black' : 'border border-[#f5f5dc] text-[#f5f5dc]'} px-6 py-3 rounded-full font-medium hover:opacity-90">立即开通</button>
+              <button type="button" onclick="showConfirm('${plan.name}')" class="block w-full ${i === 1 ? 'bg-[#f5f5dc] text-black' : 'border border-[#f5f5dc] text-[#f5f5dc]'} px-6 py-3 rounded-full font-medium hover:opacity-90">立即开通</button>
             </form>
           </div>
         `).join('')}
@@ -422,13 +493,49 @@ function selectPlanPage() {
           document.getElementById('price-' + planName).textContent = '¥' + (price / 100).toFixed(0);
           document.getElementById('price-note-' + planName).textContent = cycle === 'yearly' ? '相当于 ¥' + (price / 12 / 100).toFixed(0) + '/月' : '';
           document.getElementById('billing_cycle-' + planName).value = cycle;
+          document.getElementById('discount-tag-' + planName).className = cycle === 'yearly' ? 'mb-4' : 'hidden mb-4';
         });
       }
+
+      function showConfirm(planName) {
+        var price = currentCycle === 'yearly' ? yearlyPrices[planName] : monthlyPrices[planName];
+        var cycleLabel = currentCycle === 'yearly' ? '年度' : '月度';
+        var monthlyEquivalent = currentCycle === 'yearly' ? '（相当于 ¥' + (price / 12 / 100).toFixed(0) + '/月）' : '';
+
+        document.getElementById('confirmDetails').innerHTML =
+          '<div><span class="text-[#7a6f5d]">套餐：</span><span class="text-[#f5f5dc]">' + planName + '</span></div>' +
+          '<div><span class="text-[#7a6f5d]">周期：</span><span class="text-[#f5f5dc]">' + cycleLabel + '</span></div>' +
+          '<div><span class="text-[#7a6f5d]">金额：</span><span class="text-[#f5f5dc] text-xl font-bold">¥' + (price / 100).toFixed(2) + '</span>' + monthlyEquivalent + '</div>';
+
+        document.getElementById('confirmBtn').onclick = function() {
+          document.getElementById('form-' + planName).submit();
+        };
+
+        document.getElementById('confirmModal').classList.remove('hidden');
+      }
+
+      function closeConfirmModal() {
+        document.getElementById('confirmModal').classList.add('hidden');
+      }
+
+      document.addEventListener('keydown', function(e) {
+        if (e.key === 'Escape' && !document.getElementById('confirmModal').classList.contains('hidden')) {
+          closeConfirmModal();
+        }
+      });
     </script>
   `);
 }
 
 const app = new Hono();
+
+app.get("/styles.css", (c) => {
+  c.header("Content-Type", "text/css; charset=utf-8");
+  return c.text(
+    compiledStyles ||
+      "body{margin:0;font-family:ui-sans-serif,system-ui,-apple-system,sans-serif;background:#000;color:#f5f5dc;}"
+  );
+});
 
 function baseHtml(content: string) {
   return `<!doctype html>
@@ -437,10 +544,10 @@ function baseHtml(content: string) {
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>MOON | Model Always Online</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/daisyui@5.0.9/dist/full.min.css" />
+    <link rel="stylesheet" href="/styles.css" />
     <style>
-      * { box-sizing: border-box; }
+      html { box-sizing: border-box; }
+      *, *::before, *::after { box-sizing: inherit; }
       body { margin: 0; font-family: ui-sans-serif, system-ui, -apple-system, sans-serif; }
     </style>
   </head>
@@ -506,6 +613,12 @@ function loginPageWithError(error: string) {
             <label class="text-[#a0937d] text-sm block mb-2">密码</label>
             <input type="password" name="password" id="passwordInput" placeholder="••••••••" class="w-full bg-black border border-[#3d2f1f] rounded-lg px-4 py-3 text-[#f5f5dc] placeholder-[#5a4d3d] focus:border-[#f5f5dc] outline-none" />
             <div id="passwordError" class="text-red-400 text-xs mt-1 hidden"></div>
+          </div>
+          <div class="flex items-center justify-between">
+            <label class="flex items-center gap-2 text-[#a0937d] text-sm cursor-pointer">
+              <input type="checkbox" name="remember" id="rememberInput" class="w-4 h-4 rounded border-[#3d2f1f] bg-black checked:bg-[#f5f5dc] checked:border-[#f5f5dc]" />
+              <span>记住我</span>
+            </label>
           </div>
           <button type="submit" id="submitBtn" class="w-full bg-[#f5f5dc] text-black py-3 rounded-full font-medium hover:bg-[#d4c4a8] disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2">
             <span id="btnText">登录</span>
@@ -792,6 +905,12 @@ function loginPage() {
             <input type="password" name="password" id="passwordInput" placeholder="••••••••" class="w-full bg-black border border-[#3d2f1f] rounded-lg px-4 py-3 text-[#f5f5dc] placeholder-[#5a4d3d] focus:border-[#f5f5dc] outline-none" />
             <div id="passwordError" class="text-red-400 text-xs mt-1 hidden"></div>
           </div>
+          <div class="flex items-center justify-between">
+            <label class="flex items-center gap-2 text-[#a0937d] text-sm cursor-pointer">
+              <input type="checkbox" name="remember" id="rememberInput" class="w-4 h-4 rounded border-[#3d2f1f] bg-black checked:bg-[#f5f5dc] checked:border-[#f5f5dc]" />
+              <span>记住我</span>
+            </label>
+          </div>
           <button type="submit" id="submitBtn" class="w-full bg-[#f5f5dc] text-black py-3 rounded-full font-medium hover:bg-[#d4c4a8] disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2">
             <span id="btnText">登录</span>
             <svg id="loadingSpinner" class="animate-spin hidden w-5 h-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
@@ -815,6 +934,7 @@ function loginPage() {
         var submitBtn = document.getElementById('submitBtn');
         var emailInput = document.getElementById('emailInput');
         var passwordInput = document.getElementById('passwordInput');
+        var rememberInput = document.getElementById('rememberInput');
         var emailError = document.getElementById('emailError');
         var passwordError = document.getElementById('passwordError');
         var errorBox = document.getElementById('errorBox');
@@ -921,7 +1041,7 @@ function registerPage() {
             <label class="text-[#a0937d] text-sm block mb-2">密码</label>
             <input type="password" name="password" id="passwordInput" placeholder="设置密码" class="w-full bg-black border border-[#3d2f1f] rounded-lg px-4 py-3 text-[#f5f5dc] placeholder-[#5a4d3d] focus:border-[#f5f5dc] outline-none" />
             <div id="passwordError" class="text-red-400 text-xs mt-1 hidden"></div>
-            <div class="text-[#7a6f5d] text-xs mt-1">至少6个字符</div>
+            <div class="text-[#7a6f5d] text-xs mt-1">至少8个字符，需包含数字、字母和特殊字符</div>
           </div>
           <button type="submit" id="submitBtn" class="w-full bg-[#f5f5dc] text-black py-3 rounded-full font-medium hover:bg-[#d4c4a8] disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2">
             <span id="btnText">注册</span>
@@ -987,12 +1107,37 @@ function registerPage() {
           }
         });
 
-        passwordInput.addEventListener('input', function() {
-          if (passwordInput.value.length >= 6) {
+        passwordInput.addEventListener('blur', function() {
+          if (!passwordInput.value) return;
+          var strength = checkPasswordStrengthJS(passwordInput.value);
+          if (!strength.isValid) {
+            showError(passwordError, strength.errors[0]);
+            setInputError(passwordInput, true);
+          } else {
             hideError(passwordError);
             setInputError(passwordInput, false);
           }
         });
+
+        passwordInput.addEventListener('input', function() {
+          if (passwordInput.value.length >= 8) {
+            var strength = checkPasswordStrengthJS(passwordInput.value);
+            if (strength.isValid) {
+              hideError(passwordError);
+              setInputError(passwordInput, false);
+            }
+          }
+        });
+
+        function checkPasswordStrengthJS(pwd) {
+          var errors = [];
+          if (pwd.length < 8) errors.push("至少8个字符");
+          if (!/[a-z]/.test(pwd)) errors.push("需包含小写字母");
+          if (!/[A-Z]/.test(pwd)) errors.push("需包含大写字母");
+          if (!/[0-9]/.test(pwd)) errors.push("需包含数字");
+          if (!/[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?]/.test(pwd)) errors.push("需包含特殊字符");
+          return { isValid: errors.length === 0, errors: errors };
+        }
 
         form.addEventListener('submit', function(e) {
           var email = emailInput.value.trim();
@@ -1015,10 +1160,13 @@ function registerPage() {
             showError(passwordError, '请填写密码');
             setInputError(passwordInput, true);
             hasError = true;
-          } else if (password.length < 6) {
-            showError(passwordError, '密码至少需要6个字符');
-            setInputError(passwordInput, true);
-            hasError = true;
+          } else {
+            var strength = checkPasswordStrengthJS(password);
+            if (!strength.isValid) {
+              showError(passwordError, '密码不符合要求：' + strength.errors.join('、'));
+              setInputError(passwordInput, true);
+              hasError = true;
+            }
           }
 
           if (hasError) {
@@ -1040,7 +1188,9 @@ function dashboardPage(
   subscription: { plan: string; status: string; expires_at?: string | null } | undefined,
   usage: { fullMoon: { limit: number; used: number }; halfMoon: { limit: number; used: number }; newMoon: { limit: number; used: number } },
   apiKey: string,
-  expirationWarning: string | null
+  expirationWarning: string | null,
+  usageStats?: { today: { fullMoon: number; halfMoon: number; newMoon: number }; week: { fullMoon: number; halfMoon: number; newMoon: number }; month: { fullMoon: number; halfMoon: number; newMoon: number } },
+  quotaWarnings?: QuotaWarning[]
 ) {
   const planData = plans.find(p => p.name === subscription?.plan);
   const planName = planData?.name || "未订阅";
@@ -1053,6 +1203,103 @@ function dashboardPage(
     ? `<div class="bg-yellow-900/30 border border-yellow-700 text-yellow-200 rounded-lg px-4 py-3 mb-6 text-sm">⚠️ ${expirationWarning}</div>`
     : '';
 
+  // Generate quota warning HTML
+  const quotaWarningsHtml = quotaWarnings && quotaWarnings.length > 0
+    ? quotaWarnings.map(w => {
+        const bgClass = w.level === 'exceeded' ? 'bg-red-900/30 border-red-700 text-red-200'
+          : w.level === 'high' ? 'bg-orange-900/30 border-orange-700 text-orange-200'
+          : 'bg-yellow-900/30 border-yellow-700 text-yellow-200';
+        return `<div class="${bgClass} border rounded-lg px-4 py-3 text-sm">${w.message}</div>`;
+      }).join('')
+    : '';
+
+  // Usage section with tabs for today/week/month
+  const usageTabsHtml = usageStats
+    ? `
+      <div class="mb-4 flex gap-2">
+        <button class="usage-tab px-3 py-1 rounded text-xs ${'today' === 'today' ? 'bg-[#f5f5dc] text-black' : 'bg-[#2a2018] text-[#a0937d]'}" data-period="today">今日</button>
+        <button class="usage-tab px-3 py-1 rounded text-xs ${'today' === 'week' ? 'bg-[#f5f5dc] text-black' : 'bg-[#2a2018] text-[#a0937d]'}" data-period="week">本周</button>
+        <button class="usage-tab px-3 py-1 rounded text-xs ${'today' === 'month' ? 'bg-[#f5f5dc] text-black' : 'bg-[#2a2018] text-[#a0937d]'}" data-period="month">本月</button>
+      </div>
+      <div id="usageContent" class="space-y-3">
+        <div class="usage-period" data-period="today">
+          <div class="flex justify-between text-[#a0937d] text-sm mb-1">
+            <span>🌕</span>
+            <span>${usageStats.today.fullMoon} / ${formatLimit(usage.fullMoon.limit)} 次</span>
+          </div>
+          <div class="h-2 bg-black rounded-full overflow-hidden mb-2">
+            <div class="h-full bg-[#f5f5dc] rounded-full" style="width: ${Math.min(100, (usageStats.today.fullMoon / usage.fullMoon.limit) * 100)}%"></div>
+          </div>
+          <div class="flex justify-between text-[#a0937d] text-sm mb-1">
+            <span>🌓</span>
+            <span>${usageStats.today.halfMoon} / ${formatLimit(usage.halfMoon.limit)} 次</span>
+          </div>
+          <div class="h-2 bg-black rounded-full overflow-hidden">
+            <div class="h-full bg-[#d4c4a8] rounded-full" style="width: ${Math.min(100, (usageStats.today.halfMoon / usage.halfMoon.limit) * 100)}%"></div>
+          </div>
+        </div>
+        <div class="usage-period hidden" data-period="week">
+          <div class="flex justify-between text-[#a0937d] text-sm mb-1">
+            <span>🌕</span>
+            <span>${usageStats.week.fullMoon} / ${formatLimit(usage.fullMoon.limit)} 次</span>
+          </div>
+          <div class="h-2 bg-black rounded-full overflow-hidden mb-2">
+            <div class="h-full bg-[#f5f5dc] rounded-full" style="width: ${Math.min(100, (usageStats.week.fullMoon / usage.fullMoon.limit) * 100)}%"></div>
+          </div>
+          <div class="flex justify-between text-[#a0937d] text-sm mb-1">
+            <span>🌓</span>
+            <span>${usageStats.week.halfMoon} / ${formatLimit(usage.halfMoon.limit)} 次</span>
+          </div>
+          <div class="h-2 bg-black rounded-full overflow-hidden">
+            <div class="h-full bg-[#d4c4a8] rounded-full" style="width: ${Math.min(100, (usageStats.week.halfMoon / usage.halfMoon.limit) * 100)}%"></div>
+          </div>
+        </div>
+        <div class="usage-period hidden" data-period="month">
+          <div class="flex justify-between text-[#a0937d] text-sm mb-1">
+            <span>🌕</span>
+            <span>${usageStats.month.fullMoon} / ${formatLimit(usage.fullMoon.limit)} 次</span>
+          </div>
+          <div class="h-2 bg-black rounded-full overflow-hidden mb-2">
+            <div class="h-full bg-[#f5f5dc] rounded-full" style="width: ${Math.min(100, (usageStats.month.fullMoon / usage.fullMoon.limit) * 100)}%"></div>
+          </div>
+          <div class="flex justify-between text-[#a0937d] text-sm mb-1">
+            <span>🌓</span>
+            <span>${usageStats.month.halfMoon} / ${formatLimit(usage.halfMoon.limit)} 次</span>
+          </div>
+          <div class="h-2 bg-black rounded-full overflow-hidden">
+            <div class="h-full bg-[#d4c4a8] rounded-full" style="width: ${Math.min(100, (usageStats.month.halfMoon / usage.halfMoon.limit) * 100)}%"></div>
+          </div>
+        </div>
+      </div>
+      <div class="text-[#7a6f5d] text-xs mt-3">🌑 轻量模型不限量</div>
+    `
+    : `<div class="space-y-3">
+        <div>
+          <div class="flex justify-between text-[#a0937d] text-sm mb-1">
+            <span>🌕</span>
+            <span>${usage.fullMoon.used} / ${formatLimit(usage.fullMoon.limit)} 次</span>
+          </div>
+          <div class="h-2 bg-black rounded-full overflow-hidden">
+            <div class="h-full bg-[#f5f5dc] rounded-full" style="width: ${Math.min(100, (usage.fullMoon.used / usage.fullMoon.limit) * 100)}%"></div>
+          </div>
+        </div>
+        <div>
+          <div class="flex justify-between text-[#a0937d] text-sm mb-1">
+            <span>🌓</span>
+            <span>${usage.halfMoon.used} / ${formatLimit(usage.halfMoon.limit)} 次</span>
+          </div>
+          <div class="h-2 bg-black rounded-full overflow-hidden">
+            <div class="h-full bg-[#d4c4a8] rounded-full" style="width: ${Math.min(100, (usage.halfMoon.used / usage.halfMoon.limit) * 100)}%"></div>
+          </div>
+        </div>
+        <div>
+          <div class="flex justify-between text-[#a0937d] text-sm mb-1">
+            <span>🌑</span>
+            <span>不限</span>
+          </div>
+        </div>
+      </div>`;
+
   return baseHtml(`
     ${navbar('/dashboard')}
 
@@ -1063,6 +1310,7 @@ function dashboardPage(
       </div>
 
       ${warningHtml}
+      ${quotaWarningsHtml ? `<div class="space-y-2 mb-6">${quotaWarningsHtml}</div>` : ''}
 
       <div class="grid md:grid-cols-2 gap-6">
         <!-- Current Plan -->
@@ -1076,33 +1324,8 @@ function dashboardPage(
 
         <!-- Usage -->
         <div class="bg-[#1a1410] border border-[#3d2f1f] rounded-2xl p-6">
-          <h2 class="text-[#f5f5dc] font-bold mb-4">今日用量</h2>
-          <div class="space-y-3">
-            <div>
-              <div class="flex justify-between text-[#a0937d] text-sm mb-1">
-                <span>🌕</span>
-                <span>${usage.fullMoon.used} / ${formatLimit(usage.fullMoon.limit)} 次</span>
-              </div>
-              <div class="h-2 bg-black rounded-full overflow-hidden">
-                <div class="h-full bg-[#f5f5dc] rounded-full" style="width: ${Math.min(100, (usage.fullMoon.used / usage.fullMoon.limit) * 100)}%"></div>
-              </div>
-            </div>
-            <div>
-              <div class="flex justify-between text-[#a0937d] text-sm mb-1">
-                <span>🌓</span>
-                <span>${usage.halfMoon.used} / ${formatLimit(usage.halfMoon.limit)} 次</span>
-              </div>
-              <div class="h-2 bg-black rounded-full overflow-hidden">
-                <div class="h-full bg-[#d4c4a8] rounded-full" style="width: ${Math.min(100, (usage.halfMoon.used / usage.halfMoon.limit) * 100)}%"></div>
-              </div>
-            </div>
-            <div>
-              <div class="flex justify-between text-[#a0937d] text-sm mb-1">
-                <span>🌑</span>
-                <span>不限</span>
-              </div>
-            </div>
-          </div>
+          <h2 class="text-[#f5f5dc] font-bold mb-4">用量统计</h2>
+          ${usageTabsHtml}
         </div>
 
         <!-- API Key -->
@@ -1120,6 +1343,25 @@ function dashboardPage(
           <input type="hidden" id="apiKeyValue" value="${apiKey}" />
         </div>
 
+        <!-- API Usage Stats -->
+        <div class="bg-[#1a1410] border border-[#3d2f1f] rounded-2xl p-6">
+          <h2 class="text-[#f5f5dc] font-bold mb-4">使用统计</h2>
+          <div id="apiKeyStats" class="space-y-2">
+            <div class="flex justify-between items-center">
+              <span class="text-[#a0937d] text-sm">今日调用</span>
+              <span id="todayCalls" class="text-[#f5f5dc] text-sm">-</span>
+            </div>
+            <div class="flex justify-between items-center">
+              <span class="text-[#a0937d] text-sm">今日消费</span>
+              <span id="todayCost" class="text-[#f5f5dc] text-sm">-</span>
+            </div>
+            <div class="flex justify-between items-center">
+              <span class="text-[#a0937d] text-sm">最近使用</span>
+              <span id="lastUsed" class="text-[#f5f5dc] text-sm">-</span>
+            </div>
+          </div>
+        </div>
+
         <!-- Quick Actions -->
         <div class="bg-[#1a1410] border border-[#3d2f1f] rounded-2xl p-6">
           <h2 class="text-[#f5f5dc] font-bold mb-4">快捷操作</h2>
@@ -1133,7 +1375,7 @@ function dashboardPage(
             <a href="#" class="flex items-center gap-3 text-[#a0937d] hover:text-[#f5f5dc]">
               <span>📊</span> 使用统计
             </a>
-            <a href="/logout" class="flex items-center gap-3 text-[#a0937d] hover:text-[#f5f5dc]">
+            <a href="/logout" onclick="return confirm('确定要退出登录吗？')" class="flex items-center gap-3 text-[#a0937d] hover:text-[#f5f5dc]">
               <span>🚪</span> 退出登录
             </a>
           </div>
@@ -1144,32 +1386,50 @@ function dashboardPage(
           <h2 class="text-[#f5f5dc] font-bold mb-4">AI 偏好设置</h2>
           <div class="space-y-4">
             <div>
-              <label class="text-[#a0937d] text-sm block mb-2">优先模型</label>
+              <label class="text-[#a0937d] text-sm block mb-2">模型等级</label>
               <select id="preferredTier" onchange="updatePreferences()" class="w-full bg-black border border-[#3d2f1f] rounded-lg px-4 py-2 text-[#f5f5dc] focus:border-[#f5f5dc] outline-none">
-                <option value="🌕">🌕 高级模型 (GPT-4o, Claude, Gemini)</option>
-                <option value="🌓">🌓 均衡模型 (Kimi, MiniMax, Qwen)</option>
-                <option value="🌑">🌑 轻量模型 (快速、低成本)</option>
+                <option value="🌕">🌕 高级模型 — GPT-4o、Claude 4、Gemini 2.0｜效果最佳，成本较高</option>
+                <option value="🌓">🌓 均衡模型 — Kimi、Qwen Turbo、MiniMax｜性价比之选</option>
+                <option value="🌑">🌑 轻量模型 — GPT-4o Mini、Qwen Long、DeepSeek V4 Flash｜响应快、成本低</option>
               </select>
+              <p class="text-[#5a4d3d] text-xs mt-1">选择 AI 模型的性能等级，系统会优先使用该等级中成本最低的模型</p>
             </div>
             <div>
-              <label class="text-[#a0937d] text-sm block mb-2">优先提供商</label>
+              <label class="text-[#a0937d] text-sm block mb-2">指定模型（可选）</label>
               <select id="preferredProvider" onchange="updatePreferences()" class="w-full bg-black border border-[#3d2f1f] rounded-lg px-4 py-2 text-[#f5f5dc] focus:border-[#f5f5dc] outline-none">
-                <option value="">不使用偏好</option>
-                <option value="openai">OpenAI (GPT)</option>
-                <option value="anthropic">Anthropic (Claude)</option>
-                <option value="google">Google (Gemini)</option>
-                <option value="kimi">Kimi</option>
-                <option value="minimax">MiniMax</option>
-                <option value="qwen">Qwen</option>
+                <optgroup label="🌕 高级模型">
+                  <option value="">自动选择（推荐）</option>
+                <option value="openai">OpenAI GPT-4o</option>
+                <option value="anthropic">Anthropic Claude 4 Sonnet</option>
+                <option value="google">Google Gemini 2.0 Flash</option>
+                <option value="deepseek">DeepSeek V4 Flash</option>
+                </optgroup>
+                <optgroup label="🌓 均衡模型">
+                  <option value="kimi">Kimi Core</option>
+                  <option value="minimax">MiniMax ABAB 6.5S</option>
+                  <option value="qwen">Qwen Turbo</option>
+                </optgroup>
+                <optgroup label="🌑 轻量模型">
+                  <option value="openai-mini">GPT-4o Mini (Search)</option>
+                  <option value="qwen-long">Qwen Long</option>
+                </optgroup>
               </select>
+              <p class="text-[#5a4d3d] text-xs mt-1">指定后系统会优先使用该模型，否则自动选择同等级中成本最低的模型</p>
             </div>
-            <div class="flex items-center gap-2">
-              <input type="checkbox" id="usePersonalApiKey" onchange="togglePersonalApiKey(); updatePreferences()" class="w-4 h-4 rounded border-[#3d2f1f] bg-black checked:bg-[#f5f5dc]" />
-              <label for="usePersonalApiKey" class="text-[#a0937d] text-sm">使用自己的 API Key</label>
-            </div>
-            <div id="personalApiKeySection" class="hidden">
-              <label class="text-[#a0937d] text-sm block mb-2">第三方 API Key</label>
-              <input type="password" id="personalApiKey" placeholder="输入你的 API Key" onchange="updatePreferences()" class="w-full bg-black border border-[#3d2f1f] rounded-lg px-4 py-2 text-[#f5f5dc] placeholder-[#5a4d3d] focus:border-[#f5f5dc] outline-none" />
+            <div class="bg-[#1a1a1a] border border-[#3d2f1f] rounded-lg p-3">
+              <div class="flex items-center gap-2">
+                <input type="checkbox" id="usePersonalApiKey" onchange="togglePersonalApiKey(); updatePreferences()" class="w-4 h-4 rounded border-[#3d2f1f] bg-black checked:bg-[#f5f5dc]" />
+                <label for="usePersonalApiKey" class="text-[#a0937d] text-sm">使用自己的 API Key</label>
+              </div>
+              <p class="text-[#5a4d3d] text-xs mt-2">开启后，你的请求将使用自己的 API Key 直接调用对应服务商，不再通过平台中转。</p>
+              <div id="personalApiKeySection" class="hidden mt-3">
+                <label class="text-[#a0937d] text-sm block mb-2">第三方 API Key</label>
+                <input type="password" id="personalApiKey" placeholder="输入你的 API Key" onchange="updatePreferences()" class="w-full bg-black border border-[#3d2f1f] rounded-lg px-4 py-2 text-[#f5f5dc] placeholder-[#5a4d3d] focus:border-[#f5f5dc] outline-none" />
+                <div class="flex items-start gap-2 mt-2 text-[#8b7355] text-xs">
+                  <span>⚠️</span>
+                  <span>你的 API Key 仅存储在本地浏览器中，不会传至平台服务器。请确保 Key 安全，不要与他人分享。</span>
+                </div>
+              </div>
             </div>
           </div>
           <div id="prefStatus" class="text-[#7a6f5d] text-xs mt-3"></div>
@@ -1213,7 +1473,7 @@ function dashboardPage(
           const data = await res.json();
           if (data.apiKey) {
             document.getElementById('apiKeyValue').value = data.apiKey;
-            document.getElementById('apiDisplay').textContent = '••••••••••••••••';
+            document.getElementById('apiKeyDisplay').textContent = '••••••••••••••••';
             keyVisible = false;
             document.getElementById('toggleKeyBtn').textContent = '显示 Key';
             document.getElementById('copyFeedback').textContent = '✅ 新 Key 已生成';
@@ -1286,8 +1546,45 @@ function dashboardPage(
         }
       }
 
+      // Load API key stats on page load
+      async function loadApiKeyStats() {
+        try {
+          const res = await fetch('/api/apikey/stats');
+          const data = await res.json();
+          if (data.stats) {
+            document.getElementById('todayCalls').textContent = data.stats.todayRequestCount + ' 次';
+            document.getElementById('todayCost').textContent = '$' + data.stats.todayCostUSD.toFixed(4);
+          }
+          if (data.keys && data.keys.length > 0 && data.keys[0].lastUsedAt) {
+            const lastUsed = new Date(data.keys[0].lastUsedAt);
+            const now = new Date();
+            const diffMs = now.getTime() - lastUsed.getTime();
+            const diffMins = Math.floor(diffMs / 60000);
+            const diffHours = Math.floor(diffMins / 60);
+            const diffDays = Math.floor(diffHours / 24);
+
+            let timeAgo;
+            if (diffDays > 0) {
+              timeAgo = diffDays + ' 天前';
+            } else if (diffHours > 0) {
+              timeAgo = diffHours + ' 小时前';
+            } else if (diffMins > 0) {
+              timeAgo = diffMins + ' 分钟前';
+            } else {
+              timeAgo = '刚刚';
+            }
+            document.getElementById('lastUsed').textContent = timeAgo;
+          } else {
+            document.getElementById('lastUsed').textContent = '从未使用';
+          }
+        } catch (e) {
+          console.error('Failed to load API key stats:', e);
+        }
+      }
+
       // Load preferences when page loads
       loadPreferences();
+      loadApiKeyStats();
     </script>
   `);
 }
@@ -1295,7 +1592,13 @@ function dashboardPage(
 app.get("/", (c) => c.html(moonPage()));
 app.get("/pricing", (c) => c.html(pricingPage()));
 app.get("/login", (c) => c.html(loginPage()));
-app.get("/register", (c) => c.html(registerPage()));
+app.get("/register", async (c) => {
+  const user = await getUserFromToken(parseSessionCookie(c.req.header("cookie")));
+  if (user) {
+    return c.redirect("/order/select");
+  }
+  return c.html(registerPage());
+});
 app.get("/dashboard", async (c) => {
   const user = await getUserFromToken(parseSessionCookie(c.req.header("cookie")));
   if (!user) {
@@ -1305,6 +1608,10 @@ app.get("/dashboard", async (c) => {
   const limits = getUserUsageLimits(user.id);
   // Get expiration warning
   const expirationWarning = getExpirationWarning(user.id);
+  // Get usage stats for today/week/month
+  const usageStats = getAllUsageStats(user.id);
+  // Get quota warnings
+  const quotaWarnings = getQuotaWarning(user.id);
   // Get user's API key or create one if none exists
   const apiKeyRow = db.query("SELECT key_hash FROM api_keys WHERE user_id = ? AND is_active = 1 ORDER BY created_at DESC LIMIT 1").get(user.id) as { key_hash: string } | undefined;
   let apiKey = "";
@@ -1317,7 +1624,7 @@ app.get("/dashboard", async (c) => {
       "INSERT INTO api_keys (id, user_id, key_hash, name) VALUES (?, ?, ?, ?)"
     ).run(generateId(), user.id, btoa(apiKey), "Default Key");
   }
-  return c.html(dashboardPage(user.email, subscription, limits, apiKey, expirationWarning));
+  return c.html(dashboardPage(user.email, subscription, limits, apiKey, expirationWarning, usageStats, quotaWarnings));
 });
 
 app.post("/api/apikey/regenerate", async (c) => {
@@ -1335,6 +1642,71 @@ app.post("/api/apikey/regenerate", async (c) => {
   return c.json({ apiKey: newKey });
 });
 
+// Get API key usage stats
+app.get("/api/apikey/stats", async (c) => {
+  const user = await getUserFromToken(parseSessionCookie(c.req.header("cookie")));
+  if (!user) {
+    return c.json({ error: "unauthorized" }, 401);
+  }
+
+  // Get all API keys for user
+  const keys = db.query(
+    "SELECT id, name, created_at, last_used_at, is_active FROM api_keys WHERE user_id = ? ORDER BY created_at DESC"
+  ).all(user.id) as Array<{
+    id: string;
+    name: string;
+    created_at: string;
+    last_used_at: string | null;
+    is_active: number;
+  }>;
+
+  // Get usage stats from cost_stats for each key (aggregate by user since cost_stats doesn't track per key)
+  const thirtyDaysAgo = new Date();
+  thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+  const thirtyDaysAgoStr = thirtyDaysAgo.toISOString().split('T')[0];
+
+  const costStats = db.query(`
+    SELECT date, input_tokens, output_tokens, cost_usd, request_count
+    FROM cost_stats
+    WHERE user_id = ? AND date >= ?
+    ORDER BY date DESC
+  `).all(user.id, thirtyDaysAgoStr) as Array<{
+    date: string;
+    input_tokens: number;
+    output_tokens: number;
+    cost_usd: number;
+    request_count: number;
+  }>;
+
+  // Get today's usage events count
+  const today = new Date().toISOString().split('T')[0];
+  const todayStats = costStats.find(s => s.date === today);
+  const totalRequestCount = costStats.reduce((sum, s) => sum + s.request_count, 0);
+  const totalCostUSD = costStats.reduce((sum, s) => sum + s.cost_usd, 0);
+  const totalInputTokens = costStats.reduce((sum, s) => sum + s.input_tokens, 0);
+  const totalOutputTokens = costStats.reduce((sum, s) => sum + s.output_tokens, 0);
+
+  return c.json({
+    keys: keys.map(k => ({
+      id: k.id,
+      name: k.name,
+      createdAt: k.created_at,
+      lastUsedAt: k.last_used_at,
+      isActive: k.is_active === 1,
+    })),
+    stats: {
+      todayRequestCount: todayStats?.request_count ?? 0,
+      todayInputTokens: todayStats?.input_tokens ?? 0,
+      todayOutputTokens: todayStats?.output_tokens ?? 0,
+      todayCostUSD: todayStats?.cost_usd ?? 0,
+      totalRequestCount,
+      totalCostUSD,
+      totalInputTokens,
+      totalOutputTokens,
+    },
+  });
+});
+
 app.post("/logout", async (c) => {
   c.header("Set-Cookie", "session=; HttpOnly; Path=/; Max-Age=0; SameSite=Lax");
   return c.redirect("/");
@@ -1349,6 +1721,7 @@ app.post("/login", async (c) => {
   const body = await c.req.parseBody();
   const email = body.email as string;
   const password = body.password as string;
+  const remember = body.remember === "on";
 
   if (!email || !password) {
     return c.html(loginPageWithError("请填写邮箱和密码"), 400);
@@ -1363,12 +1736,12 @@ app.post("/login", async (c) => {
     .get(email) as { id: string; email: string; password_hash: string } | undefined;
 
   if (!user || !(await verifyPassword(password, user.password_hash))) {
-    return c.html(loginPageWithError("邮箱或密码错误"), 401);
+    return c.html(loginPageWithError("用户名或密码不正确，请重试"), 401);
   }
 
   const token = await createToken(user.id, user.email);
-
-  c.header("Set-Cookie", `session=${token}; HttpOnly; Path=/; Max-Age=${SESSION_DURATION_MS / 1000}; SameSite=Lax`);
+  const maxAge = remember ? 30 * 24 * 60 * 60 : SESSION_DURATION_MS / 1000;
+  c.header("Set-Cookie", `session=${token}; HttpOnly; Path=/; Max-Age=${maxAge}; SameSite=Lax`);
   return c.redirect("/dashboard");
 });
 
@@ -1385,8 +1758,9 @@ app.post("/register", async (c) => {
     return c.html(registerPageWithError("请输入有效的邮箱地址"), 400);
   }
 
-  if (password.length < 6) {
-    return c.html(registerPageWithError("密码至少需要6个字符"), 400);
+  const strength = checkPasswordStrength(password);
+  if (!strength.isValid) {
+    return c.html(registerPageWithError("密码不符合要求：" + strength.errors.join("、")), 400);
   }
 
   const existing = db
@@ -1503,7 +1877,7 @@ function docsPage() {
               <span class="text-2xl">🌑</span>
               <h3 class="text-[#f5f5dc] font-bold">New Moon - 轻量模型</h3>
             </div>
-            <div class="grid md:grid-cols-2 gap-4">
+            <div class="grid md:grid-cols-3 gap-4">
               <div class="bg-black border border-[#3d2f1f] rounded-lg p-4">
                 <div class="text-[#f5f5dc] font-medium mb-1">GPT-4o Mini (Search)</div>
                 <div class="text-[#7a6f5d] text-xs">OpenAI · 128K ctx</div>
@@ -1513,6 +1887,11 @@ function docsPage() {
                 <div class="text-[#f5f5dc] font-medium mb-1">Qwen Long</div>
                 <div class="text-[#7a6f5d] text-xs">阿里 · 1M ctx</div>
                 <div class="text-[#a0937d] text-xs mt-2">¥0.8/1M in · ¥2/1M out</div>
+              </div>
+              <div class="bg-black border border-[#3d2f1f] rounded-lg p-4">
+                <div class="text-[#f5f5dc] font-medium mb-1">DeepSeek V4 Flash</div>
+                <div class="text-[#7a6f5d] text-xs">DeepSeek · 1M ctx</div>
+                <div class="text-[#a0937d] text-xs mt-2">¥0.14/1M in · ¥0.28/1M out</div>
               </div>
             </div>
           </div>
@@ -1704,8 +2083,8 @@ app.post("/order/create", async (c) => {
   const email = user.email;
 
   db.query(
-    "INSERT INTO orders (out_trade_no, plan, billing_cycle, fee, email, status) VALUES (?, ?, ?, ?, ?, ?)"
-  ).run(outTradeNo, planName, billingCycle, fee, email, "pending");
+    "INSERT INTO orders (out_trade_no, user_id, plan, billing_cycle, fee, email, status) VALUES (?, ?, ?, ?, ?, ?, ?)"
+  ).run(outTradeNo, user.id, planName, billingCycle, fee, email, "pending");
 
   return c.html(orderPage(planName, outTradeNo, fee, billingCycle));
 });
@@ -1721,21 +2100,57 @@ app.get("/order/success", async (c) => {
     return c.redirect("/dashboard");
   }
 
+  const userId = order.user_id;
+
+  // Update order status first
   db.query("UPDATE orders SET status = 'paid', updated_at = CURRENT_TIMESTAMP WHERE out_trade_no = ?").run(outTradeNo);
 
-  const existingSub = db.query("SELECT * FROM subscriptions WHERE user_id = ?").get(order.email ?? "") as { id: string } | undefined;
+  if (!userId) {
+    // User ID not found - log error for investigation
+    console.error(`[/order/success] Payment success but no user_id for order ${outTradeNo}, email: ${order.email}`);
+    return c.html(orderSuccessPage(outTradeNo));
+  }
+
+  // Calculate new expires_at based on existing subscription and billing_cycle
+  const now = new Date();
+  let newExpiresAt: Date;
+
+  const existingSub = db.query("SELECT * FROM subscriptions WHERE user_id = ?").get(userId) as { id: string; expires_at: string | null } | undefined;
+
+  if (existingSub && existingSub.expires_at) {
+    const existingExpires = new Date(existingSub.expires_at);
+    if (existingExpires > now) {
+      // Subscription not expired: extend from existing expires_at
+      newExpiresAt = existingExpires;
+    } else {
+      // Subscription expired: start from today
+      newExpiresAt = now;
+    }
+  } else {
+    // No existing subscription: start from today
+    newExpiresAt = now;
+  }
+
+  // Add billing period
+  newExpiresAt.setMonth(newExpiresAt.getMonth() + (order.billing_cycle === 'yearly' ? 12 : 1));
+  const expiresAtStr = newExpiresAt.toISOString();
 
   if (existingSub) {
     db.query(
-      "UPDATE subscriptions SET plan = ?, period = ?, status = 'active', updated_at = CURRENT_TIMESTAMP WHERE user_id = ?"
-    ).run(order.plan, order.billing_cycle, order.email ?? "");
+      "UPDATE subscriptions SET plan = ?, period = ?, status = 'active', expires_at = ?, updated_at = CURRENT_TIMESTAMP WHERE user_id = ?"
+    ).run(order.plan, order.billing_cycle, expiresAtStr, userId);
   } else {
     db.query(
-      "INSERT INTO subscriptions (user_id, plan, period, status) VALUES (?, ?, ?, ?)"
-    ).run(order.email ?? "", order.plan, order.billing_cycle, "active");
+      "INSERT INTO subscriptions (user_id, plan, period, status, expires_at) VALUES (?, ?, ?, ?, ?)"
+    ).run(userId, order.plan, order.billing_cycle, "active", expiresAtStr);
   }
 
-  return c.html(orderSuccessPage(outTradeNo));
+  // Send activation email
+  sendSubscriptionActivationEmail(order.email, order.plan, order.billing_cycle, expiresAtStr).catch(err => {
+    console.error('Failed to send activation email:', err);
+  });
+
+  return c.html(orderSuccessPage(outTradeNo, order.plan, order.billing_cycle));
 });
 
 app.get("/order/cancel", async (c) => {
@@ -1784,20 +2199,51 @@ app.post("/order/callback", async (c) => {
   }
 
   if (status === "paid") {
+    const userId = order.user_id;
+
+    // Update order status first
     db.query(
       "UPDATE orders SET status = 'paid', onepay_id = ?, updated_at = CURRENT_TIMESTAMP WHERE out_trade_no = ?"
     ).run(onepay_id, out_trade_no);
 
-    const existingSub = db.query("SELECT * FROM subscriptions WHERE user_id = ?").get(order.email ?? "") as { id: string } | undefined;
+    if (!userId) {
+      // User ID not found - log error for alerting
+      console.error(`[/order/callback] Payment success but no user_id for order ${out_trade_no}, email: ${order.email}`);
+      return c.json({ success: true, warning: "user_not_found" });
+    }
+
+    // Calculate new expires_at based on existing subscription and billing_cycle
+    const now = new Date();
+    let newExpiresAt: Date;
+
+    const existingSub = db.query("SELECT * FROM subscriptions WHERE user_id = ?").get(userId) as { id: string; expires_at: string | null } | undefined;
+
+    if (existingSub && existingSub.expires_at) {
+      const existingExpires = new Date(existingSub.expires_at);
+      if (existingExpires > now) {
+        // Subscription not expired: extend from existing expires_at
+        newExpiresAt = existingExpires;
+      } else {
+        // Subscription expired: start from today
+        newExpiresAt = now;
+      }
+    } else {
+      // No existing subscription: start from today
+      newExpiresAt = now;
+    }
+
+    // Add billing period
+    newExpiresAt.setMonth(newExpiresAt.getMonth() + (order.billing_cycle === 'yearly' ? 12 : 1));
+    const expiresAtStr = newExpiresAt.toISOString();
 
     if (existingSub) {
       db.query(
-        "UPDATE subscriptions SET plan = ?, period = ?, status = 'active', updated_at = CURRENT_TIMESTAMP WHERE user_id = ?"
-      ).run(order.plan, order.billing_cycle, order.email ?? "");
+        "UPDATE subscriptions SET plan = ?, period = ?, status = 'active', expires_at = ?, updated_at = CURRENT_TIMESTAMP WHERE user_id = ?"
+      ).run(order.plan, order.billing_cycle, expiresAtStr, userId);
     } else {
       db.query(
-        "INSERT INTO subscriptions (user_id, plan, period, status) VALUES (?, ?, ?, ?)"
-      ).run(order.email ?? "", order.plan, order.billing_cycle, "active");
+        "INSERT INTO subscriptions (user_id, plan, period, status, expires_at) VALUES (?, ?, ?, ?, ?)"
+      ).run(userId, order.plan, order.billing_cycle, "active", expiresAtStr);
     }
   } else if (status === "cancelled" || status === "failed") {
     db.query("UPDATE orders SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE out_trade_no = ?").run(status, out_trade_no);
@@ -1918,10 +2364,22 @@ app.post("/api/ai/chat", async (c) => {
       }
 
       if (!usedFallback) {
+        // Check if user is on free trial - provide appropriate message
+        const limits = getUserUsageLimits(user.id);
+        let noQuotaMessage = `${selectedTier} 额度已用完，请升级套餐或稍后再试`;
+
+        // Provide more helpful message for free trial users
+        const trialMsg = getFreeTrialMessage(limits);
+        if (trialMsg) {
+          noQuotaMessage = trialMsg;
+        } else if (isOnFreeTrial(user.id)) {
+          noQuotaMessage = '您的免费试用额度已用完，请购买套餐以继续使用服务。';
+        }
+
         return c.json({
           error: "quota_exceeded",
           tier: selectedTier,
-          message: `${selectedTier} 额度已用完，请升级套餐或稍后再试`,
+          message: noQuotaMessage,
         }, 429);
       }
     }
@@ -1949,13 +2407,23 @@ app.post("/api/ai/chat", async (c) => {
       }
     }
 
-    const response = await routeAIRequest(request);
+    // Pass personal API key settings to router if user has enabled it
+    const routingOptions: { personalApiKey?: string; personalProvider?: string } = {};
+    if (userPrefs?.use_personal_api_key && userPrefs?.personal_api_key && userPrefs?.preferred_provider) {
+      routingOptions.personalApiKey = userPrefs.personal_api_key;
+      routingOptions.personalProvider = userPrefs.preferred_provider;
+    }
+
+    const response = await routeAIRequest(request, routingOptions);
 
     // Record usage and cost
     if (response.usage) {
       recordUsage(user.id, response.usage.inputTokens, response.usage.outputTokens, response.usage.totalCostUSD);
     }
     recordUsageEvent(user.id, selectedTier, selectedModel);
+
+    // Update API key last_used_at timestamp
+    updateApiKeyLastUsed(user.id);
 
     return c.json({
       content: response.content,
@@ -1991,7 +2459,7 @@ app.get("/api/ai/providers", (c) => {
   const configured = getConfiguredProviders();
   return c.json({
     configured,
-    allProviders: ['openai', 'anthropic', 'google', 'kimi', 'minimax', 'qwen'],
+    allProviders: ['openai', 'anthropic', 'google', 'kimi', 'minimax', 'qwen', 'deepseek'],
   });
 });
 
@@ -2060,7 +2528,7 @@ app.put("/api/ai/preferences", async (c) => {
     }
 
     // Validate provider
-    const validProviders = ['openai', 'anthropic', 'google', 'kimi', 'minimax', 'qwen'];
+    const validProviders = ['openai', 'anthropic', 'google', 'kimi', 'minimax', 'qwen', 'deepseek'];
     if (preferredProvider && !validProviders.includes(preferredProvider)) {
       return c.json({ error: "Invalid provider" }, 400);
     }

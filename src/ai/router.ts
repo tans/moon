@@ -1,4 +1,5 @@
 import { MODEL_CONFIGS, getModelForTier, type ModelConfig } from './models';
+import { getConfig } from '../config';
 
 // API Keys configuration
 interface AIKeys {
@@ -8,17 +9,12 @@ interface AIKeys {
   kimi?: string;
   minimax?: string;
   qwen?: string;
+  deepseek?: string;
 }
 
 function getAPIKeys(): AIKeys {
-  return {
-    openai: process.env.OPENAI_API_KEY,
-    anthropic: process.env.ANTHROPIC_API_KEY,
-    google: process.env.GOOGLE_API_KEY,
-    kimi: process.env.KIMI_API_KEY,
-    minimax: process.env.MINIMAX_API_KEY,
-    qwen: process.env.QWEN_API_KEY,
-  };
+  const config = getConfig();
+  return config.aiProviders;
 }
 
 export interface AIRequest {
@@ -43,6 +39,8 @@ export interface AIRoutingOptions {
   preferredTier?: '🌕' | '🌓' | '🌑';
   fallbackEnabled?: boolean;
   userId?: string;
+  personalApiKey?: string;
+  personalProvider?: string;
 }
 
 // Route to specific AI provider
@@ -51,17 +49,21 @@ async function routeToProvider(
   model: string,
   messages: AIRequest['messages'],
   temperature?: number,
-  maxTokens?: number
+  maxTokens?: number,
+  personalApiKey?: string
 ): Promise<AIResponse> {
   const keys = getAPIKeys();
+  // Use personal API key if provided and matches the provider
+  const effectiveKey = personalApiKey ? personalApiKey : undefined;
 
   switch (provider) {
     case 'openai': {
-      if (!keys.openai) throw new Error('OpenAI API key not configured');
+      const apiKey = effectiveKey ?? keys.openai;
+      if (!apiKey) throw new Error('OpenAI API key not configured');
       const response = await fetch('https://api.openai.com/v1/chat/completions', {
         method: 'POST',
         headers: {
-          'Authorization': `Bearer ${keys.openai}`,
+          'Authorization': `Bearer ${apiKey}`,
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
@@ -96,7 +98,8 @@ async function routeToProvider(
     }
 
     case 'anthropic': {
-      if (!keys.anthropic) throw new Error('Anthropic API key not configured');
+      const apiKey = effectiveKey ?? keys.anthropic;
+      if (!apiKey) throw new Error('Anthropic API key not configured');
       const systemMsg = messages.find(m => m.role === 'system');
       const otherMsgs = messages.filter(m => m.role !== 'system');
       const body: Record<string, unknown> = {
@@ -109,7 +112,7 @@ async function routeToProvider(
       const response = await fetch('https://api.anthropic.com/v1/messages', {
         method: 'POST',
         headers: {
-          'x-api-key': keys.anthropic,
+          'x-api-key': apiKey,
           'anthropic-version': '2023-06-01',
           'Content-Type': 'application/json',
         },
@@ -140,7 +143,8 @@ async function routeToProvider(
     }
 
     case 'google': {
-      if (!keys.google) throw new Error('Google API key not configured');
+      const apiKey = effectiveKey ?? keys.google;
+      if (!apiKey) throw new Error('Google API key not configured');
       const systemMsg = messages.find(m => m.role === 'system');
       const otherMsgs = messages.filter(m => m.role !== 'system');
       const contents = otherMsgs.map(m => ({
@@ -155,7 +159,7 @@ async function routeToProvider(
         },
       };
       if (systemMsg) body.systemInstruction = { parts: [{ text: systemMsg.content }] };
-      const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${keys.google}`;
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
       const response = await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -187,11 +191,12 @@ async function routeToProvider(
     }
 
     case 'kimi': {
-      if (!keys.kimi) throw new Error('Kimi API key not configured');
+      const apiKey = effectiveKey ?? keys.kimi;
+      if (!apiKey) throw new Error('Kimi API key not configured');
       const response = await fetch('https://api.moonshot.cn/v1/chat/completions', {
         method: 'POST',
         headers: {
-          'Authorization': `Bearer ${keys.kimi}`,
+          'Authorization': `Bearer ${apiKey}`,
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({ model, messages, temperature, max_tokens: maxTokens }),
@@ -221,11 +226,12 @@ async function routeToProvider(
     }
 
     case 'minimax': {
-      if (!keys.minimax) throw new Error('MiniMax API key not configured');
+      const apiKey = effectiveKey ?? keys.minimax;
+      if (!apiKey) throw new Error('MiniMax API key not configured');
       const response = await fetch('https://api.minimax.chat/v1/text/chatcompletion_v2', {
         method: 'POST',
         headers: {
-          'Authorization': `Bearer ${keys.minimax}`,
+          'Authorization': `Bearer ${apiKey}`,
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({ model, messages, temperature, max_tokens: maxTokens }),
@@ -255,11 +261,12 @@ async function routeToProvider(
     }
 
     case 'qwen': {
-      if (!keys.qwen) throw new Error('Qwen API key not configured');
+      const apiKey = effectiveKey ?? keys.qwen;
+      if (!apiKey) throw new Error('Qwen API key not configured');
       const response = await fetch('https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions', {
         method: 'POST',
         headers: {
-          'Authorization': `Bearer ${keys.qwen}`,
+          'Authorization': `Bearer ${apiKey}`,
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({ model, messages, temperature, max_tokens: maxTokens }),
@@ -288,6 +295,41 @@ async function routeToProvider(
       };
     }
 
+    case 'deepseek': {
+      const apiKey = effectiveKey ?? keys.deepseek;
+      if (!apiKey) throw new Error('DeepSeek API key not configured');
+      const response = await fetch('https://api.deepseek.com/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${apiKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ model, messages, temperature, max_tokens: maxTokens }),
+      });
+      if (!response.ok) {
+        const error = await response.text();
+        throw new Error(`DeepSeek API error: ${response.status} - ${error}`);
+      }
+      const data = await response.json() as {
+        usage?: { prompt_tokens: number; completion_tokens: number };
+        choices: Array<{ message: { content: string } }>;
+        model?: string;
+      };
+      const config = MODEL_CONFIGS[model];
+      const inputCost = ((data.usage?.prompt_tokens ?? 0) / 1000000) * (config?.inputCostPer1M ?? 0);
+      const outputCost = ((data.usage?.completion_tokens ?? 0) / 1000000) * (config?.outputCostPer1M ?? 0);
+      return {
+        content: data.choices[0].message.content,
+        model: data.model ?? model,
+        usage: {
+          inputTokens: data.usage?.prompt_tokens ?? 0,
+          outputTokens: data.usage?.completion_tokens ?? 0,
+          totalCostUSD: inputCost + outputCost,
+        },
+        provider: 'deepseek',
+      };
+    }
+
     default:
       throw new Error(`Unsupported provider: ${provider}`);
   }
@@ -298,12 +340,15 @@ export async function routeAIRequest(
   request: AIRequest,
   options: AIRoutingOptions = {}
 ): Promise<AIResponse> {
-  const { fallbackEnabled = true } = options;
+  const { fallbackEnabled = true, personalApiKey, personalProvider } = options;
   const modelConfig = MODEL_CONFIGS[request.model];
 
   if (!modelConfig) {
     throw new Error(`Unknown model: ${request.model}`);
   }
+
+  // Determine effective API key: use personal key only if it matches the provider
+  const effectivePersonalKey = (personalApiKey && personalProvider === modelConfig.provider) ? personalApiKey : undefined;
 
   // Try the requested model first
   try {
@@ -312,7 +357,8 @@ export async function routeAIRequest(
       request.model,
       request.messages,
       request.temperature,
-      request.maxTokens
+      request.maxTokens,
+      effectivePersonalKey
     );
   } catch (error) {
     if (!fallbackEnabled) throw error;
@@ -331,12 +377,15 @@ export async function routeAIRequest(
 
       try {
         console.log(`[AI Router] ${request.model} failed, falling back to ${fallbackModel}`);
+        // For fallback, only use personal key if the provider matches
+        const fallbackPersonalKey = (personalApiKey && personalProvider === fallbackConfig.provider) ? personalApiKey : undefined;
         return await routeToProvider(
           fallbackConfig.provider,
           fallbackModel,
           request.messages,
           request.temperature,
-          request.maxTokens
+          request.maxTokens,
+          fallbackPersonalKey
         );
       } catch {
         // Continue to next tier
