@@ -534,10 +534,14 @@ function selectPlanPage() {
 const app = new Hono();
 
 app.get("/styles.css", (c) => {
-  c.header("Content-Type", "text/css; charset=utf-8");
-  return c.text(
+  return new Response(
     compiledStyles ||
-      "body{margin:0;font-family:ui-sans-serif,system-ui,-apple-system,sans-serif;background:#f4f4f0;color:#1c1b18;}"
+      "body{margin:0;font-family:ui-sans-serif,system-ui,-apple-system,sans-serif;background:#f4f4f0;color:#1c1b18;}",
+    {
+      headers: {
+        "Content-Type": "text/css; charset=utf-8",
+      },
+    },
   );
 });
 
